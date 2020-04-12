@@ -20,7 +20,8 @@ namespace VenmoForSlack
             Host.CreateDefaultBuilder(args)
                 .ConfigureWebHostDefaults(webBuilder =>
                 {
-                    webBuilder.UseStartup<Startup>();
+                    webBuilder.UseStartup<Startup>()
+                    .UseUrls("http://127.0.0.1:8900");
                 });
     }
 }
