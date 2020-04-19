@@ -4,6 +4,7 @@ using System.Threading.Tasks;
 using System.Net.Http;
 using Flurl;
 using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
 using VenmoForSlack.Venmo.Models;
 using Microsoft.Extensions.Logging;
 
@@ -14,8 +15,8 @@ namespace VenmoForSlack.Venmo
         private const string BaseUrl = "https://api.venmo.com/v1/";
         private readonly ILogger logger;
         private HttpClient httpClient;
-        private string? AccessToken { get; set; }
-        private string? UserId { get; set; }
+        public string? AccessToken { private get; set; }
+        public string? UserId { private get; set; }
 
         public VenmoApi(ILogger<VenmoApi> logger)
         {
@@ -45,11 +46,37 @@ namespace VenmoForSlack.Venmo
             return response;
         }
 
+        public async Task<VenmoAuthResponse> RefreshAuth(string refreshToken)
+        {
+            Url url = new Url(BaseUrl).AppendPathSegments("oauth", "access_token");
+            Dictionary<string, string> data = new Dictionary<string, string>()
+            {
+                { "client_id", Secrets.VenmoClientId },
+                { "client_secret", Secrets.VenmoClientSecret },
+                { "refresh_token", refreshToken }
+            };
+            
+            HttpResponseMessage responseMessage = await Post(url, new FormUrlEncodedContent(data));
+            if (!responseMessage.IsSuccessStatusCode)
+            {
+                logger.LogError($"Failed to refresh token. " +
+                    $"Refresh token: {refreshToken}. Status code: {responseMessage.StatusCode}. " +
+                    $"Message: {await responseMessage.Content.ReadAsStringAsync()}");
+                throw new Exception("Failed to refresh token");
+            }
+            string responseString = await responseMessage.Content.ReadAsStringAsync();
+            logger.LogInformation(responseString);
+            VenmoAuthResponse response = JsonConvert.DeserializeObject<VenmoAuthResponse>(responseString);
+            AccessToken = response.AccessToken;
+            UserId = response.User.Id;
+            return response;
+        }
+
         public async Task<MeResponse> GetMe()
         {
             Url url = new Url(BaseUrl).AppendPathSegment("me");
             HttpResponseMessage responseMessage = await Get(url);
-            MeResponse response = JsonConvert.DeserializeObject<MeResponse>(await responseMessage.Content.ReadAsStringAsync());
+            MeResponse response = GetObject<MeResponse>(await responseMessage.Content.ReadAsStringAsync());
             return response;
         }
 
@@ -62,17 +89,17 @@ namespace VenmoForSlack.Venmo
                     access_token = AccessToken
                 });
             HttpResponseMessage responseMessage = await Get(url);
-            FriendsResponse response = JsonConvert.DeserializeObject<FriendsResponse>(await responseMessage.Content.ReadAsStringAsync());
+            FriendsResponse response = GetObject<FriendsResponse>(await responseMessage.Content.ReadAsStringAsync());
             return response;
         }
 
         public async Task<List<VenmoUser>> GetAllFriends()
         {
             MeResponse me = await GetMe();
-            int limit = me.Data.User.FriendsCount.Value;
+            int limit = me.Data.User.FriendsCount!.Value;
             int offset = 0;
             List<VenmoUser> friends = new List<VenmoUser>();
-            FriendsResponse friendsResponse = null;
+            FriendsResponse? friendsResponse = null;
             do
             {
                 friendsResponse = await GetFriends(limit, offset);
@@ -80,13 +107,54 @@ namespace VenmoForSlack.Venmo
                 limit = friendsResponse.Data.Count;
                 offset += friendsResponse.Data.Count;
             }
-            while (friendsResponse.Pagination.Next != null);
+            while (friendsResponse.Pagination != null && friendsResponse.Pagination.Next != null);
             return friends;
         }
 
-        public async Task PostPayment(float amount,
+        /// <summary>
+        /// Get a single payment.
+        /// </summary>
+        /// <param name="completionNumber">The payment id</param>
+        /// <returns>A Venmo payment</returns>
+        public async Task<VenmoPaymentResponse> GetPayment(string completionNumber)
+        {
+            Url url = new Url(BaseUrl).AppendPathSegments("payments", completionNumber);
+            HttpResponseMessage responseMessage = await Get(url);
+            VenmoPaymentResponse response = GetObject<VenmoPaymentResponse>(await responseMessage.Content.ReadAsStringAsync());
+            return response;
+        }
+
+        /// <summary>
+        /// Pays a single payment.
+        /// </summary>
+        /// <param name="completionNumber">The payment id</param>
+        /// <param name="action">The Venmo action, one of approve, deny, or cancel</param>
+        /// <returns>The completed Venmo payment</returns>
+        public async Task<VenmoPaymentResponse> PutPayment(string completionNumber, string action)
+        {
+            Url url = new Url(BaseUrl).AppendPathSegments("payments", completionNumber);
+            Dictionary<string, string> data = new Dictionary<string, string>()
+            {
+                { "access_token", AccessToken! },
+                { "action", action }
+            };
+            HttpResponseMessage responseMessage = await Put(url, new FormUrlEncodedContent(data));
+            VenmoPaymentResponse response = GetObject<VenmoPaymentResponse>(await responseMessage.Content.ReadAsStringAsync());
+            return response;
+        }
+
+        /// <summary>
+        /// Creates a new payment
+        /// </summary>
+        /// <param name="amount">The amount</param>
+        /// <param name="note">The note</param>
+        /// <param name="recipients">The recipients of the payment</param>
+        /// <param name="action">The Venmo action, one of pay or charge</param>
+        /// <param name="venmoAudience">The Venmo audience, one of private, friends, or public, defaults to private</param>
+        /// <returns>List of payment responses</returns>
+        public async Task<List<VenmoPaymentWithBalanceResponse>> PostPayment(double amount,
             string note,
-            List<string> recipients,
+            Dictionary<string, string> recipients,
             VenmoAction action,
             VenmoAudience venmoAudience = VenmoAudience.Private)
         {
@@ -97,47 +165,25 @@ namespace VenmoForSlack.Venmo
                 amountString = $"-{amountString}";
             }
 
-            List<VenmoUser> friendsList = null;
-
+            List<VenmoPaymentWithBalanceResponse> responses = new List<VenmoPaymentWithBalanceResponse>();
             foreach (var recipient in recipients)
             {
                 Dictionary<string, string> data = new Dictionary<string, string>()
                 {
-                    { "access_token", AccessToken }
+                    { "access_token", AccessToken! },
+                    { recipient.Key, recipient.Value }
                 };
-
-                if (recipient.StartsWith("phone:"))
-                {
-                    data.Add("phone", recipient.Substring(6));
-                }
-                else if (recipient.StartsWith("email:"))
-                {
-                    data.Add("email", recipient.Substring(6));
-                }
-                else
-                {
-                    // TODO: Check alias
-                    // TODO: Check cache
-                    if (friendsList == null)
-                    {
-                        friendsList = await GetAllFriends();
-                    }
-                    string id = FindFriend(recipient, friendsList);
-                    if (id == null)
-                    {
-                        // Exception: You are not friends with {recipient}
-                        continue;
-                    }
-                    data.Add("user_id", id);
-                }
                 data.Add("note", note);
                 data.Add("amount", amountString);
                 data.Add("audience", venmoAudience.ToString());
                 HttpResponseMessage responseMessage = await Post(url, new FormUrlEncodedContent(data));
+                VenmoPaymentWithBalanceResponse response = GetObject<VenmoPaymentWithBalanceResponse>(await responseMessage.Content.ReadAsStringAsync());
+                responses.Add(response);
             }
+            return responses;
         }
 
-        public async Task GetPending(VenmoAction action)
+        public async Task<VenmoPaymentPendingResponse> GetPending(int limit = 20, int offset = 0)
         {
             Url url = new Url(BaseUrl).AppendPathSegment("payments")
                 .SetQueryParams(new {
@@ -145,9 +191,35 @@ namespace VenmoForSlack.Venmo
                     access_token = AccessToken
                 });
             HttpResponseMessage responseMessage = await Get(url);
+            VenmoPaymentPendingResponse response = GetObject<VenmoPaymentPendingResponse>(await responseMessage.Content.ReadAsStringAsync());
+            return response;
         }
 
-        private string FindFriend(string recipient, List<VenmoUser> friends)
+        public async Task<List<VenmoPaymentPending>> GetAllPayments()
+        {
+            int limit = 100;
+            int offset = 0;
+            List<VenmoPaymentPending> pendingPayments = new List<VenmoPaymentPending>();
+            VenmoPaymentPendingResponse? response = null;
+            do
+            {
+                try
+                {
+                    response = await GetPending(limit, offset);
+                }
+                catch (VenmoException)
+                {
+                    throw;
+                }
+                pendingPayments.AddRange(response.Data);
+                limit = response.Data.Count;
+                offset += response.Data.Count;
+            }
+            while (response.Pagination != null && response.Pagination.Next != null);
+            return pendingPayments;
+        }
+
+        public static string? FindFriend(string recipient, List<VenmoUser> friends)
         {
             foreach (var friend in friends)
             {
@@ -172,6 +244,31 @@ namespace VenmoForSlack.Venmo
             HttpResponseMessage responseMessage = await httpClient.PostAsync(url, httpContent);
             logger.LogInformation(await responseMessage.Content.ReadAsStringAsync());
             return responseMessage;
+        }
+
+        private async Task<HttpResponseMessage> Put(Url url, HttpContent httpContent)
+        {
+            HttpResponseMessage responseMessage = await httpClient.PutAsync(url, httpContent);
+            logger.LogInformation(await responseMessage.Content.ReadAsStringAsync());
+            return responseMessage;
+        }
+
+        private T GetObject<T>(string responseString)
+        {
+            JObject o = JObject.Parse(responseString);
+            if (o["error"] != null)
+            {
+                throw CreateVenmoError(o);
+            }
+            else
+            {
+                return o.ToObject<T>()!;
+            }
+        }
+
+        private VenmoException CreateVenmoError(JObject o)
+        {
+            return new VenmoException((string)o["error"]!["message"]!);
         }
     }
 }

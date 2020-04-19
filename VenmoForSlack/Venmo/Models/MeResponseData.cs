@@ -8,6 +8,6 @@ namespace VenmoForSlack.Venmo.Models
         public VenmoUser User { get; set; }
 
         [JsonProperty("balance")]
-        public string Balance { get; set; }
+        public string? Balance { get; set; }
     }
 }

@@ -29,7 +29,7 @@ namespace VenmoForSlack.Venmo.Models
         // [JsonProperty("trust_request")]
 
         [JsonProperty("phone")]
-        public string Phone { get; set; }
+        public string? Phone { get; set; }
 
         [JsonProperty("profile_picture_url")]
         public string ProfilePictureUrl { get; set; }
@@ -52,9 +52,9 @@ namespace VenmoForSlack.Venmo.Models
         public string IdentityType { get; set; }
 
         [JsonProperty("friend_status")]
-        public string FriendStatus { get; set; }
+        public string? FriendStatus { get; set; }
 
         [JsonProperty("email")]
-        public string Email { get; set; }
+        public string? Email { get; set; }
     }
 }

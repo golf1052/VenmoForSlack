@@ -6,11 +6,14 @@ using Microsoft.AspNetCore.Hosting;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using MongoDB.Driver;
 
 namespace VenmoForSlack
 {
     public class Program
     {
+        public static MongoClient Mongo = new MongoClient(Secrets.MongoConnectionString);
+        
         public static void Main(string[] args)
         {
             CreateHostBuilder(args).Build().Run();
