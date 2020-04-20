@@ -483,6 +483,7 @@ namespace VenmoForSlack.Controllers
                             await Respond("Invalid arithmetic string", responseUrl);
                             return null;
                         }
+                        currentNumber = number;
 
                         double result;
                         try
