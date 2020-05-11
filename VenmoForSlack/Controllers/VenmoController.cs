@@ -60,9 +60,6 @@ namespace VenmoForSlack.Controllers
             SlackCore slackApi = new SlackCore(workspaceInfo.BotToken);
 
             MongoDatabase database = new MongoDatabase(body.TeamId!);
-
-            await WebhookController.SendSlackMessage(workspaceInfo, "testing", body.UserId!, httpClient);
-
             string[] splitMessage = body.Text!.Split(' ');
             if (splitMessage.Length > 0)
             {
