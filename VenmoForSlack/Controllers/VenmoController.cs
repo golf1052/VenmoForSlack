@@ -344,13 +344,17 @@ namespace VenmoForSlack.Controllers
                             continue;
                         }
 
-                        if (parsedVenmoPayment.Amount < 0)
+                        if (parsedVenmoPayment.Action == VenmoAction.Charge)
                         {
                             await Respond($"Successfully charged {r.Data!.Payment.Target.User.Username} ${r.Data.Payment.Amount} for {r.Data.Payment.Note}. Audience is {r.Data.Payment.Audience}", responseUrl);
                         }
-                        else
+                        else if (parsedVenmoPayment.Action == VenmoAction.Pay)
                         {
                             await Respond($"Successfully paid {r.Data!.Payment.Target.User.Username} ${r.Data.Payment.Amount} for {r.Data.Payment.Note}. Audience is {r.Data.Payment.Audience}", responseUrl);
+                        }
+                        else
+                        {
+                            await Respond($"Successfully ??? {r.Data!.Payment.Target.User.Username} ${r.Data.Payment.Amount} for {r.Data.Payment.Note}. Audience is {r.Data.Payment.Audience}", responseUrl);
                         }
                     }
 
