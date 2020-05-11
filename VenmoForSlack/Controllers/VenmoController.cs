@@ -78,6 +78,7 @@ namespace VenmoForSlack.Controllers
                 if (string.IsNullOrEmpty(token))
                 {
                     _ = RequestAuth(body.ResponseUrl!);
+                    return "";
                 }
                 else
                 {
