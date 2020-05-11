@@ -74,7 +74,15 @@ namespace VenmoForSlack.Controllers
             MongoDatabase database = new MongoDatabase(body.TeamId!);
             if (string.IsNullOrEmpty(body.Text))
             {
-                return Help.HelpMessage;
+                string? token = await GetAccessToken(body.UserId!, database);
+                if (string.IsNullOrEmpty(token))
+                {
+                    _ = RequestAuth(body.ResponseUrl!);
+                }
+                else
+                {
+                    return Help.HelpMessage;
+                }
             }
 
             string[] splitMessage = body.Text.Split(' ');
@@ -94,7 +102,7 @@ namespace VenmoForSlack.Controllers
                 }
             }
             
-            string? accessToken = await GetAccessToken(body.UserId!, body.ResponseUrl!, database);
+            string? accessToken = await GetAccessToken(body.UserId!, database);
             if (string.IsNullOrEmpty(accessToken))
             {
                 logger.LogError($"Couldn't refresh access token for {body.UserId!}");
@@ -124,9 +132,7 @@ namespace VenmoForSlack.Controllers
             await Respond("Authentication complete", responseUrl);
         }
 
-        private async Task<string?> GetAccessToken(string userId,
-            string responseUrl,
-            MongoDatabase database)
+        private async Task<string?> GetAccessToken(string userId, MongoDatabase database)
         {
             Database.Models.VenmoUser? venmoUser = database.GetUser(userId);
             if (venmoUser == null)
