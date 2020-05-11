@@ -12,7 +12,6 @@ using MongoDB.Bson;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using NodaTime;
-using VenmoForSlack;
 using VenmoForSlack.Controllers.Models;
 using VenmoForSlack.Database;
 using VenmoForSlack.Database.Models;
@@ -40,6 +39,19 @@ namespace VenmoForSlack.Controllers
             this.httpClient = httpClient;
             this.venmoApi = venmoApi;
             this.clock = clock;
+        }
+
+        [HttpGet]
+        public ActionResult Get([FromQuery] string? code)
+        {
+            if (string.IsNullOrEmpty(code))
+            {
+                return File("index.html", "text/html");
+            }
+            else
+            {
+                return File("code.html", "text/html");
+            }
         }
 
         [HttpPost]
