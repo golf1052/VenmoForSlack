@@ -156,7 +156,7 @@ namespace VenmoForSlack.Venmo
         /// <returns>List of payment responses</returns>
         public async Task<List<VenmoPaymentWithBalanceResponse>> PostPayment(double amount,
             string note,
-            Dictionary<string, string> recipients,
+            List<string> recipients,
             VenmoAction action,
             VenmoAudience venmoAudience = VenmoAudience.Private)
         {
@@ -170,10 +170,19 @@ namespace VenmoForSlack.Venmo
             List<VenmoPaymentWithBalanceResponse> responses = new List<VenmoPaymentWithBalanceResponse>();
             foreach (var recipient in recipients)
             {
+                string[] splitRecipient = recipient.Split(':');
+                if (splitRecipient.Length != 2)
+                {
+                    responses.Add(new VenmoPaymentWithBalanceResponse()
+                    {
+                        Error = $"Malformed recipient: {recipient}"
+                    });
+                    continue;
+                }
                 Dictionary<string, string> data = new Dictionary<string, string>()
                 {
                     { "access_token", AccessToken! },
-                    { recipient.Key, recipient.Value }
+                    { splitRecipient[0], splitRecipient[1] }
                 };
                 data.Add("note", note);
                 data.Add("amount", amountString);

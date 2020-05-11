@@ -634,17 +634,17 @@ namespace VenmoForSlack.Controllers
             VenmoAudience venmoAudience = VenmoAudience.Private)
         {
             List<Venmo.Models.VenmoUser>? friendsList = null;
-            Dictionary<string, string> ids = new Dictionary<string, string>();
+            List<string> ids = new List<string>();
             List<string> unprocessedRecipients = new List<string>();
             foreach (var recipient in recipients)
             {
                 if (recipient.StartsWith("phone:"))
                 {
-                    ids.Add("phone", recipient.Substring(6));
+                    ids.Add(recipient);
                 }
                 else if (recipient.StartsWith("email:"))
                 {
-                    ids.Add("email", recipient.Substring(6));
+                    ids.Add(recipient);
                 }
                 else
                 {
@@ -671,7 +671,7 @@ namespace VenmoForSlack.Controllers
                         unprocessedRecipients.Add(recipient);
                         continue;
                     }
-                    ids.Add("user_id", id);
+                    ids.Add($"user_id:{id}");
                 }
             }
 
