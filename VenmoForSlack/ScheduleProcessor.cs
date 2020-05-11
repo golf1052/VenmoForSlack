@@ -35,6 +35,7 @@ namespace VenmoForSlack
             this.clock = clock;
             CheckDuration = Duration.FromMinutes(15);
             checkTask = CheckSchedules();
+            _ = CheckCheckSchedulesTask();
         }
 
         private async Task CheckSchedules()
@@ -171,6 +172,26 @@ namespace VenmoForSlack
                 }
 
                 await Task.Delay(CheckDuration.ToTimeSpan());
+            }
+        }
+
+        private async Task CheckCheckSchedulesTask()
+        {
+            while (true)
+            {
+                if (checkTask.IsFaulted)
+                {
+                    logger.LogError("Check schedules task has failed, restarting.");
+                    if (checkTask.Exception != null)
+                    {
+                        foreach (var exception in checkTask.Exception.InnerExceptions)
+                        {
+                            logger.LogError(exception, "InnerException");
+                        }
+                    }
+                    checkTask = CheckSchedules();
+                }
+                await Task.Delay((int)CheckDuration.TotalMilliseconds / 2);
             }
         }
 

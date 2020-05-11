@@ -60,7 +60,12 @@ namespace VenmoForSlack.Controllers
             SlackCore slackApi = new SlackCore(workspaceInfo.BotToken);
 
             MongoDatabase database = new MongoDatabase(body.TeamId!);
-            string[] splitMessage = body.Text!.Split(' ');
+            if (string.IsNullOrEmpty(body.Text))
+            {
+                return Help.HelpMessage;
+            }
+
+            string[] splitMessage = body.Text.Split(' ');
             if (splitMessage.Length > 0)
             {
                 if (splitMessage[0].ToLower() == "code")
@@ -131,7 +136,6 @@ namespace VenmoForSlack.Controllers
                     UserId = ""
                 };
                 database.SaveUser(venmoUser);
-                await RequestAuth(responseUrl);
                 return null;
             }
 
