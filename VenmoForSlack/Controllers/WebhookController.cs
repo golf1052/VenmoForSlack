@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using System.Net.Http;
+using System.Net.Http.Headers;
 using System.Text;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Mvc;
@@ -67,11 +68,11 @@ namespace VenmoForSlack.Controllers
                 {
                     message += $" | ID: {request.Data.Id}";
                 }
-                await SendSlackMessage(databaseInfo.Value.workspaceInfo, message, databaseInfo.Value.user.UserId);
+                await SendSlackMessage(databaseInfo.Value.workspaceInfo, message, databaseInfo.Value.user.UserId, httpClient);
                 if (request.Data.Action == "charge")
                 {
                     string acceptCommand = $"/venmo complete accept {request.Data.Id}";
-                    await SendSlackMessage(databaseInfo.Value.workspaceInfo, acceptCommand, databaseInfo.Value.user.UserId);
+                    await SendSlackMessage(databaseInfo.Value.workspaceInfo, acceptCommand, databaseInfo.Value.user.UserId, httpClient);
                 }
             }
             else if (request.Type == "payment.updated")
@@ -102,22 +103,26 @@ namespace VenmoForSlack.Controllers
                     message += "rejected your ";
                 }
                 message += $"${request.Data.Amount:F2} charge for {request.Data.Note}";
-                await SendSlackMessage(databaseInfo.Value.workspaceInfo, message, databaseInfo.Value.user.UserId);
+                await SendSlackMessage(databaseInfo.Value.workspaceInfo, message, databaseInfo.Value.user.UserId, httpClient);
             }
             return "";
         }
 
-        private async Task SendSlackMessage(WorkspaceInfo workspaceInfo, string message, string channel)
+        public static async Task SendSlackMessage(WorkspaceInfo workspaceInfo,
+            string message,
+            string channel,
+            HttpClient httpClient)
         {
             string botToken = workspaceInfo.BotToken;
             JObject o = new JObject();
-            o["token"] = botToken;
             o["channel"] = channel;
             o["text"] = message;
             o["username"] = "Venmo";
             o["icon_url"] = "https://s3-us-west-2.amazonaws.com/slack-files2/avatars/2015-11-10/14228813844_49fae5f9cad227c8c1b5_72.jpg";
-            await httpClient.PostAsync("https://slack.com/api/chat.postMessage",
-                new StringContent(o.ToString(Formatting.None), Encoding.UTF8, "application/json"));
+            HttpRequestMessage requestMessage = new HttpRequestMessage(HttpMethod.Post, "https://slack.com/api/chat.postMessage");
+            requestMessage.Content = new StringContent(o.ToString(Formatting.None), Encoding.UTF8, "application/json");
+            requestMessage.Headers.Authorization = new AuthenticationHeaderValue("Bearer", botToken);
+            await httpClient.SendAsync(requestMessage);
         }
 
         private (MongoDatabase database, Database.Models.VenmoUser user, WorkspaceInfo workspaceInfo)? GetUserFromDatabases(string venmoId)

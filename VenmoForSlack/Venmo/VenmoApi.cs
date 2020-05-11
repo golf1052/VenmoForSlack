@@ -48,6 +48,7 @@ namespace VenmoForSlack.Venmo
 
         public async Task<VenmoAuthResponse> RefreshAuth(string refreshToken)
         {
+            logger.LogInformation("Attempting to refresh token");
             Url url = new Url(BaseUrl).AppendPathSegments("oauth", "access_token");
             Dictionary<string, string> data = new Dictionary<string, string>()
             {
@@ -69,6 +70,7 @@ namespace VenmoForSlack.Venmo
             VenmoAuthResponse response = JsonConvert.DeserializeObject<VenmoAuthResponse>(responseString);
             AccessToken = response.AccessToken;
             UserId = response.User.Id;
+            logger.LogInformation("Refreshed token successfully");
             return response;
         }
 
@@ -177,7 +179,18 @@ namespace VenmoForSlack.Venmo
                 data.Add("amount", amountString);
                 data.Add("audience", venmoAudience.ToString());
                 HttpResponseMessage responseMessage = await Post(url, new FormUrlEncodedContent(data));
-                VenmoPaymentWithBalanceResponse response = GetObject<VenmoPaymentWithBalanceResponse>(await responseMessage.Content.ReadAsStringAsync());
+                VenmoPaymentWithBalanceResponse response;
+                try
+                {
+                    response = GetObject<VenmoPaymentWithBalanceResponse>(await responseMessage.Content.ReadAsStringAsync());
+                }
+                catch (VenmoException ex)
+                {
+                    response = new VenmoPaymentWithBalanceResponse()
+                    {
+                        Error = ex.Message
+                    };
+                }
                 responses.Add(response);
             }
             return responses;

@@ -4,11 +4,14 @@ using System.Linq;
 using System.Net.Http;
 using System.Text;
 using System.Threading.Tasks;
+using golf1052.SlackAPI;
+using golf1052.SlackAPI.Objects;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging;
 using MongoDB.Bson;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
+using NodaTime;
 using VenmoForSlack;
 using VenmoForSlack.Controllers.Models;
 using VenmoForSlack.Database;
@@ -26,14 +29,17 @@ namespace VenmoForSlack.Controllers
         private readonly ILogger logger;
         private readonly HttpClient httpClient;
         private readonly VenmoApi venmoApi;
+        private readonly IClock clock;
 
         public VenmoController(ILogger<VenmoController> logger,
             HttpClient httpClient,
-            VenmoApi venmoApi)
+            VenmoApi venmoApi,
+            IClock clock)
         {
             this.logger = logger;
             this.httpClient = httpClient;
             this.venmoApi = venmoApi;
+            this.clock = clock;
         }
 
         [HttpPost]
@@ -51,8 +57,11 @@ namespace VenmoForSlack.Controllers
                 logger.LogInformation($"Unknown token for team {body.TeamId}: {body.Token}");
                 return "Team verification token mismatch";
             }
+            SlackCore slackApi = new SlackCore(workspaceInfo.BotToken);
 
             MongoDatabase database = new MongoDatabase(body.TeamId!);
+
+            await WebhookController.SendSlackMessage(workspaceInfo, "testing", body.UserId!, httpClient);
 
             string[] splitMessage = body.Text!.Split(' ');
             if (splitMessage.Length > 0)
@@ -74,12 +83,14 @@ namespace VenmoForSlack.Controllers
             string? accessToken = await GetAccessToken(body.UserId!, body.ResponseUrl!, database);
             if (string.IsNullOrEmpty(accessToken))
             {
+                logger.LogError($"Couldn't refresh access token for {body.UserId!}");
                 _ = Respond("Access token is expired, Sanders needs to debug this. Go bother him or something.", body.ResponseUrl!);
+                await RequestAuth(body.ResponseUrl!);
             }
             else
             {
                 venmoApi.AccessToken = accessToken;
-                _ = ParseMessage($"venmo {body.Text!}", body.UserId!, body.ResponseUrl!, database);
+                _ = ParseMessage($"venmo {body.Text!}", body.UserId!, body.ResponseUrl!, database, slackApi);
             }
             return "";
         }
@@ -100,7 +111,9 @@ namespace VenmoForSlack.Controllers
             await Respond("Authentication complete", responseUrl);
         }
 
-        private async Task<string?> GetAccessToken(string userId, string responseUrl, MongoDatabase database)
+        private async Task<string?> GetAccessToken(string userId,
+            string responseUrl,
+            MongoDatabase database)
         {
             Database.Models.VenmoUser? venmoUser = database.GetUser(userId);
             if (venmoUser == null)
@@ -125,18 +138,23 @@ namespace VenmoForSlack.Controllers
                 return null;
             }
 
-            DateTime expiresDate = (DateTime)venmoUser.Venmo.ExpiresIn!;
+            return await CheckIfAccessTokenIsExpired(venmoUser, venmoApi, database);
+        }
+
+        public static async Task<string?> CheckIfAccessTokenIsExpired(Database.Models.VenmoUser venmoUser,
+            VenmoApi venmoApi,
+            MongoDatabase database)
+        {
+            DateTime expiresDate = (DateTime)venmoUser.Venmo!.ExpiresIn!;
             if (expiresDate < DateTime.UtcNow)
             {
                 VenmoAuthResponse response;
                 try
                 {
-                    logger.LogInformation($"Trying to refresh token for {userId}");
                     response = await venmoApi.RefreshAuth(venmoUser.Venmo.RefreshToken!);
                 }
-                catch (Exception ex)
+                catch (Exception)
                 {
-                    logger.LogError(ex, $"Failed to refresh token for {userId}");
                     venmoUser.Venmo = new VenmoAuthObject()
                     {
                         AccessToken = "",
@@ -145,7 +163,6 @@ namespace VenmoForSlack.Controllers
                         UserId = ""
                     };
                     database.SaveUser(venmoUser);
-                    await RequestAuth(responseUrl);
                     return null;
                 }
 
@@ -161,7 +178,8 @@ namespace VenmoForSlack.Controllers
         private async Task ParseMessage(string message,
             string userId,
             string responseUrl,
-            MongoDatabase database)
+            MongoDatabase database,
+            SlackCore slackApi)
         {
             MeResponse me = await venmoApi.GetMe();
             string venmoId = me.Data.User.Id;
@@ -283,78 +301,313 @@ namespace VenmoForSlack.Controllers
                     splitMessage[1].ToLower() == "pay" ||
                     splitMessage[2].ToLower() == "pay")
                 {
-                    string audienceString = "private";
-                    if (splitMessage[2].ToLower() == "charge" || splitMessage[2].ToLower() == "pay")
-                    {
-                        audienceString = splitMessage[1].ToLower();
-                        if (audienceString != "public" && audienceString != "friends" && audienceString != "private")
-                        {
-                            await Respond("Valid payment sharing commands\npublic\nfriend\nprivate", responseUrl);
-                            return;
-                        }
-                        var list = splitMessage.ToList();
-                        list.RemoveAt(1);
-                        splitMessage = list.ToArray();
-                    }
-
-                    VenmoAudience audience;
+                    ParsedVenmoPayment parsedVenmoPayment;
                     try
                     {
-                        audience = VenmoAudienceHelperMethods.FromString(audienceString);
+                        parsedVenmoPayment = ParseVenmoPaymentMessage(splitMessage);
                     }
-                    catch (Exception)
+                    catch (Exception ex)
                     {
-                        await Respond("Valid payment sharing commands\npublic\nfriend\nprivate", responseUrl);
+                        logger.LogWarning(ex, $"Unable to parse message. Message: {string.Join(' ', splitMessage)}");
+                        await Respond(ex.Message, responseUrl);
                         return;
                     }
 
-                    string which = splitMessage[1];
-                    VenmoAction action;
+                    var response = await VenmoPayment(venmoApi, venmoUser, database, parsedVenmoPayment.Amount,
+                        parsedVenmoPayment.Note, parsedVenmoPayment.Recipients, parsedVenmoPayment.Action,
+                        parsedVenmoPayment.Audience);
                     
-                    try
+                    foreach (var r in response.responses)
                     {
-                        action = VenmoActionHelperMethods.FromString(which);
-                    }
-                    catch (Exception)
-                    {
-                        await Respond("Unknown payment type, must be either 'pay' or 'charge'.", responseUrl);
-                        return;
+                        if (!string.IsNullOrEmpty(r.Error))
+                        {
+                            await Respond($"Venmo error: {r.Error}", responseUrl);
+                            continue;
+                        }
+
+                        if (parsedVenmoPayment.Amount < 0)
+                        {
+                            await Respond($"Successfully charged {r.Data!.Payment.Target.User.Username} ${r.Data.Payment.Amount} for {r.Data.Payment.Note}. Audience is {r.Data.Payment.Audience}", responseUrl);
+                        }
+                        else
+                        {
+                            await Respond($"Successfully paid {r.Data!.Payment.Target.User.Username} ${r.Data.Payment.Amount} for {r.Data.Payment.Note}. Audience is {r.Data.Payment.Audience}", responseUrl);
+                        }
                     }
 
-                    if (splitMessage.Length <= 6)
+                    foreach (var u in response.unprocessedRecipients)
                     {
-                        await Respond("Invalid payment string.", responseUrl);
+                        await Respond($"You are not friends with {u}.", responseUrl);
+                    }
+                }
+                else if (splitMessage[1].ToLower() == "schedule")
+                {
+                    var slackUsers = await slackApi.UsersList();
+                    SlackUser? slackUser = HelperMethods.GetSlackUser(venmoUser.UserId, slackUsers);
+                    if (slackUser == null)
+                    {
+                        logger.LogError($"While trying to get slack user timezone they disappeared? {venmoUser.UserId}");
+                        await Respond("While trying to get your timzone you disappeared?", responseUrl);
                         return;
                     }
-                    int forIndex = FindStringInList(splitMessage, "for");
-                    if (forIndex == -1)
-                    {
-                        await Respond("Invalid payment string, you need to include what the payment is \"for\".", responseUrl);
-                        return;
-                    }
-                    string[] amountStringArray = splitMessage[2..forIndex];
-                    double? amount = await CalculateTotal(amountStringArray.ToList(), responseUrl);
-                    if (amount == null)
-                    {
-                        return;
-                    }
-                    int toIndex = FindLastStringInList(splitMessage, "to");
-                    if (toIndex < 5)
-                    {
-                        await Respond("Could not find recipients", responseUrl);
-                        return;
-                    }
-                    string note = string.Join(' ', splitMessage[(forIndex + 1)..toIndex]);
-                    List<string> recipients = splitMessage[(toIndex + 1)..].ToList();
-                    await VenmoPayment(venmoUser, database, responseUrl, amount.Value, note, recipients, action,
-                        audience);
+                    await ParseScheduleMessage(splitMessage, slackUser.TimeZone, venmoUser, database, responseUrl);
                 }
             }
         }
 
-        private async Task VenmoPayment(Database.Models.VenmoUser venmoUser,
+        public static ParsedVenmoPayment ParseVenmoPaymentMessage(string[] splitMessage)
+        {
+            string audienceString = "private";
+            if (splitMessage[2].ToLower() == "charge" || splitMessage[2].ToLower() == "pay")
+            {
+                audienceString = splitMessage[1].ToLower();
+                if (audienceString != "public" && audienceString != "friends" && audienceString != "private")
+                {
+                    throw new Exception("Valid payment sharing commands\npublic\nfriend\nprivate");
+                }
+                var list = splitMessage.ToList();
+                list.RemoveAt(1);
+                splitMessage = list.ToArray();
+            }
+
+            VenmoAudience audience;
+            try
+            {
+                audience = VenmoAudienceHelperMethods.FromString(audienceString);
+            }
+            catch (Exception)
+            {
+                throw new Exception("Valid payment sharing commands\npublic\nfriend\nprivate");
+            }
+
+            string which = splitMessage[1];
+            VenmoAction action;
+            
+            try
+            {
+                action = VenmoActionHelperMethods.FromString(which);
+            }
+            catch (Exception)
+            {
+                throw new Exception("Unknown payment type, must be either 'pay' or 'charge'.");
+            }
+
+            if (splitMessage.Length <= 6)
+            {
+                throw new Exception("Invalid payment string.");
+            }
+
+            int forIndex = HelperMethods.FindStringInList(splitMessage, "for");
+            if (forIndex == -1)
+            {
+                throw new Exception("Invalid payment string, you need to include what the payment is \"for\".");
+            }
+
+            string[] amountStringArray = splitMessage[2..forIndex];
+
+            double amount;
+            try
+            {
+                amount = CalculateTotal(amountStringArray.ToList());
+            }
+            catch (Exception)
+            {
+                throw;
+            }
+
+            int toIndex = HelperMethods.FindLastStringInList(splitMessage, "to");
+            if (toIndex < 5)
+            {
+                throw new Exception("Could not find recipients");
+            }
+
+            string note = string.Join(' ', splitMessage[(forIndex + 1)..toIndex]);
+            List<string> recipients = splitMessage[(toIndex + 1)..].ToList();
+            return new ParsedVenmoPayment(amount, note, recipients, action, audience);
+        }
+
+        private async Task ParseScheduleMessage(string[] splitMessage,
+            string userTimeZone,
+            Database.Models.VenmoUser venmoUser,
             MongoDatabase database,
-            string responseUrl,
+            string responseUrl)
+        {
+            if (splitMessage[2].ToLower() == "list")
+            {
+                if (venmoUser.Schedule == null || venmoUser.Schedule.Count == 0)
+                {
+                    await Respond("You have no scheduled Venmos.", responseUrl);
+                    return;
+                }
+
+                for (int i = 0; i < venmoUser.Schedule.Count; i++)
+                {
+                    VenmoSchedule schedule = venmoUser.Schedule[i];
+                    ParsedVenmoPayment paymentInfo;
+                    try
+                    {
+                        paymentInfo = ParseVenmoPaymentMessage(ConvertScheduleMessageIntoPaymentMessage(schedule.Command.Split(' ')));
+                    }
+                    catch (Exception ex)
+                    {
+                        logger.LogWarning(ex, $"Unable to parse saved schedule command {schedule.Command}");
+                        continue;
+                    }
+
+                    ZonedDateTime nextExecutionInTimeZone = Instant.FromDateTimeUtc(schedule.NextExecution)
+                        .InZone(DateTimeZoneProviders.Tzdb[userTimeZone]);
+
+                    string scheduleVerb;
+                    string processedString;
+                    if (schedule.Verb == "every")
+                    {
+                        scheduleVerb = "Recurring";
+                        processedString = "next processed";
+                    }
+                    else if (schedule.Verb == "at" || schedule.Verb == "on")
+                    {
+                        scheduleVerb = "One-time";
+                        processedString = "processed";
+                    }
+                    else
+                    {
+                        scheduleVerb = "???";
+                        processedString = "???";
+                    }
+
+                    string actionString;
+                    if (paymentInfo.Action == VenmoAction.Charge)
+                    {
+                        actionString = "charge";
+                    }
+                    else if (paymentInfo.Action == VenmoAction.Pay)
+                    {
+                        actionString = "payment";
+                    }
+                    else
+                    {
+                        actionString = "???";
+                    }
+
+                    await Respond($"{i + 1}: {scheduleVerb} {VenmoAudienceHelperMethods.ToString(paymentInfo.Audience)} " +
+                        $"{actionString} of ${paymentInfo.Amount} for {paymentInfo.Note} to " +
+                        $"{string.Join(' ', paymentInfo.Recipients)}. This will be {processedString} at " +
+                        $"{nextExecutionInTimeZone.GetFriendlyZonedDateTimeString()}.", responseUrl);
+                }
+                return;
+            }
+
+            if (splitMessage[2].ToLower() == "delete")
+            {
+                if (venmoUser.Schedule == null || venmoUser.Schedule.Count == 0)
+                {
+                    await Respond("You have no scheduled Venmos.", responseUrl);
+                    return;
+                }
+
+                if (splitMessage.Length != 4)
+                {
+                    await Respond("Incorrect schedule delete message. Expected /venmo schedule delete ###", responseUrl);
+                    return;
+                }
+
+                if (int.TryParse(splitMessage[3], out int number))
+                {
+                    if (number > venmoUser.Schedule.Count || number < 1)
+                    {
+                        if (venmoUser.Schedule.Count == 1)
+                        {
+                            await Respond($"Not a valid schedule number, you only have {venmoUser.Schedule.Count} scheduled item.", responseUrl);
+                        }
+                        else
+                        {
+                            await Respond($"Not a valid schedule number, you only have {venmoUser.Schedule.Count} scheduled items.", responseUrl);
+                        }
+                        return;
+                    }
+
+                    string commandToRemove = venmoUser.Schedule[number - 1].Command;
+                    venmoUser.Schedule.RemoveAt(number - 1);
+                    database.SaveUser(venmoUser);
+                    await Respond($"Removed /{commandToRemove}", responseUrl);
+                }
+                else
+                {
+                    await Respond($"Expected schedule number to delete. Got {splitMessage[3]} instead.", responseUrl);
+                }
+                return;
+            }
+
+            ZonedDateTime scheduledTime;
+            try
+            {
+                scheduledTime = ScheduleProcessor.ConvertScheduleMessageIntoDateTime(splitMessage, userTimeZone, clock);
+            }
+            catch (Exception ex)
+            {
+                logger.LogWarning(ex, $"{string.Join(' ', splitMessage)}");
+                await Respond(ex.Message, responseUrl);
+                return;
+            }
+
+            string[] newSplitMessage = ConvertScheduleMessageIntoPaymentMessage(splitMessage);
+            ParsedVenmoPayment parsedVenmoPayment;
+            try
+            {
+                parsedVenmoPayment = ParseVenmoPaymentMessage(newSplitMessage);
+            }
+            catch (Exception ex)
+            {
+                logger.LogWarning(ex, $"{string.Join(' ', splitMessage)}");
+                await Respond(ex.Message, responseUrl);
+                return;
+            }
+
+            if (venmoUser.Schedule == null)
+            {
+                venmoUser.Schedule = new List<VenmoSchedule>();
+            }
+
+            venmoUser.Schedule.Add(new VenmoSchedule()
+            {
+                Verb = ScheduleProcessor.GetScheduleMessageVerb(splitMessage),
+                NextExecution = scheduledTime.ToDateTimeUtc(),
+                Command = string.Join(' ', splitMessage)
+            });
+
+            database.SaveUser(venmoUser);
+            await Respond($"Scheduled Venmo set! Next execution: {scheduledTime.GetFriendlyZonedDateTimeString()}.", responseUrl);
+        }
+
+        public static string[] ConvertScheduleMessageIntoPaymentMessage(string[] splitMessage)
+        {
+            int payOrChargeIndex = HelperMethods.FindStringInList(splitMessage, "pay");
+            if (payOrChargeIndex == -1)
+            {
+                payOrChargeIndex = HelperMethods.FindStringInList(splitMessage, "charge");
+                if (payOrChargeIndex == -1)
+                {
+                    throw new Exception("Invalid schedule string, could not find \"pay\" or \"charge\" in string.");
+                }
+            }
+
+            if (splitMessage[payOrChargeIndex - 1].ToLower() == "private" ||
+                splitMessage[payOrChargeIndex - 1].ToLower() == "friends" ||
+                splitMessage[payOrChargeIndex - 1].ToLower() == "public")
+            {
+                payOrChargeIndex -= 1;
+            }
+
+            string[] newSplitMessage = new string[splitMessage.Length - payOrChargeIndex + 1];
+            Array.Copy(splitMessage, payOrChargeIndex, newSplitMessage, 1, splitMessage.Length - payOrChargeIndex);
+            newSplitMessage[0] = splitMessage[0];
+            return newSplitMessage;
+        }
+
+        public static async Task<(List<VenmoPaymentWithBalanceResponse> responses, List<string> unprocessedRecipients)> VenmoPayment(
+            VenmoApi venmoApi,
+            Database.Models.VenmoUser venmoUser,
+            MongoDatabase database,
             double amount,
             string note,
             List<string> recipients,
@@ -363,6 +616,7 @@ namespace VenmoForSlack.Controllers
         {
             List<Venmo.Models.VenmoUser>? friendsList = null;
             Dictionary<string, string> ids = new Dictionary<string, string>();
+            List<string> unprocessedRecipients = new List<string>();
             foreach (var recipient in recipients)
             {
                 if (recipient.StartsWith("phone:"))
@@ -395,28 +649,18 @@ namespace VenmoForSlack.Controllers
 
                     if (id == null)
                     {
-                        await Respond($"You are not friends with {recipient}.", responseUrl);
+                        unprocessedRecipients.Add(recipient);
                         continue;
                     }
                     ids.Add("user_id", id);
                 }
             }
 
-            List<VenmoPaymentWithBalanceResponse> responses =  await venmoApi.PostPayment(amount, note, ids, action, venmoAudience);
-            foreach (var response in responses)
-            {
-                if (amount < 0)
-                {
-                    await Respond($"Successfully charged {response.Data.Payment.Target.User.Username} ${response.Data.Payment.Amount} for {response.Data.Payment.Note}. Audience is {response.Data.Payment.Audience}", responseUrl);
-                }
-                else
-                {
-                    await Respond($"Successfully paid {response.Data.Payment.Target.User.Username} ${response.Data.Payment.Amount} for {response.Data.Payment.Note}. Audience is {response.Data.Payment.Audience}", responseUrl);
-                }
-            }
+            List<VenmoPaymentWithBalanceResponse> responses = await venmoApi.PostPayment(amount, note, ids, action, venmoAudience);
+            return (responses, unprocessedRecipients);
         }
 
-        private void AddUsernameToCache(string username,
+        private static void AddUsernameToCache(string username,
             string id,
             Database.Models.VenmoUser venmoUser,
             MongoDatabase database)
@@ -433,7 +677,7 @@ namespace VenmoForSlack.Controllers
             database.SaveUser(venmoUser);
         }
 
-        private async Task<double?> CalculateTotal(List<string> amountStringList, string responseUrl)
+        public static double CalculateTotal(List<string> amountStringList)
         {
             string currentSign = string.Empty;
             double? previousNumber = null;
@@ -454,15 +698,13 @@ namespace VenmoForSlack.Controllers
                         {
                             if (previousNumber == null)
                             {
-                                await Respond("Invalid arithmetic string", responseUrl);
-                                return null;
+                                throw new Exception("Invalid arithmetic string");
                             }
                             currentSign = copy;
                         }
                         else
                         {
-                            await Respond("Invalid arithmetic string", responseUrl);
-                            return null;
+                            throw new Exception("Invalid arithmetic string");
                         }
                     }
                     else if (previousNumber == null)
@@ -470,8 +712,7 @@ namespace VenmoForSlack.Controllers
                         bool canParse = double.TryParse(copy, out double number);
                         if (!canParse)
                         {
-                            await Respond("Invalid arithmetic string", responseUrl);
-                            return null;
+                            throw new Exception("Invalid arithmetic string");
                         }
                         previousNumber = number;
                     }
@@ -480,8 +721,7 @@ namespace VenmoForSlack.Controllers
                         bool canParse = double.TryParse(copy, out double number);
                         if (!canParse)
                         {
-                            await Respond("Invalid arithmetic string", responseUrl);
-                            return null;
+                            throw new Exception("Invalid arithmetic string");
                         }
                         currentNumber = number;
 
@@ -492,8 +732,7 @@ namespace VenmoForSlack.Controllers
                         }
                         catch (ArithmeticException)
                         {
-                            await Respond("Invalid arithmetic string", responseUrl);
-                            return null;
+                            throw;
                         }
                         amountStringList[i] = result.ToString();
                         int modifyingI = i;
@@ -515,18 +754,16 @@ namespace VenmoForSlack.Controllers
             bool parsed = double.TryParse(amountStringList[0], out double final);
             if (!parsed)
             {
-                await Respond("Could not calculate total", responseUrl);
-                return null;
+                throw new Exception("Could not calculate total");
             }
             return final;
         }
 
-        private double Mathify(double? num1, string? sign, double? num2)
+        public static double Mathify(double? num1, string? sign, double? num2)
         {
             if (num1 == null || sign == null || num2 == null)
             {
-                logger.LogError($"{nameof(num1)}: {num1}. {nameof(sign)}: {sign}. {nameof(num2)}: {num2}");
-                throw new ArithmeticException("An argument is null");
+                throw new ArithmeticException($"An argument is null. {nameof(num1)}: {num1}. {nameof(sign)}: {sign}. {nameof(num2)}: {num2}");
             }
 
             if (sign == "+")
@@ -547,38 +784,8 @@ namespace VenmoForSlack.Controllers
             }
             else
             {
-                logger.LogError($"Unknown sign: {sign}");
                 throw new ArithmeticException($"Unknown sign: {sign}");
             }
-        }
-
-        private int FindStringInList(IEnumerable<string> enumerable, string str)
-        {
-            int i = 0;
-            foreach (var element in enumerable)
-            {
-                if (element.ToLower() == str.ToLower())
-                {
-                    return i;
-                }
-                i++;
-            }
-            return -1;
-        }
-
-        private int FindLastStringInList(IEnumerable<string> enumerable, string str)
-        {
-            int index = -1;
-            int i = 0;
-            foreach (var item in enumerable)
-            {
-                if (item.ToLower() == str.ToLower())
-                {
-                    index = i;
-                }
-                i += 1;
-            }
-            return index;
         }
 
         private async Task AliasUser(Database.Models.VenmoUser venmoUser,

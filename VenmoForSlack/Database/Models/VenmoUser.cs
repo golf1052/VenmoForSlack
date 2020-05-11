@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using MongoDB.Bson;
 using MongoDB.Bson.Serialization.Attributes;
 
@@ -26,6 +27,9 @@ namespace VenmoForSlack.Database.Models
 
         [BsonElement("cache")]
         public BsonDocument? Cache { get; set; }
+
+        [BsonElement("schedule")]
+        public List<VenmoSchedule>? Schedule { get; set; }
 
         public VenmoAlias? GetAlias(string alias)
         {

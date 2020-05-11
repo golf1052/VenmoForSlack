@@ -11,6 +11,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using NodaTime;
 using VenmoForSlack.Venmo;
 
 namespace VenmoForSlack
@@ -30,12 +31,13 @@ namespace VenmoForSlack
             services.AddControllers()
                 .AddNewtonsoftJson();
 
-                services.AddSingleton<HttpClient>();
-                services.AddScoped<VenmoApi>(container =>
-                {
-                    var logger = container.GetRequiredService<ILogger<VenmoApi>>();
-                    return new VenmoApi(logger);
-                });
+            services.AddSingleton<HttpClient>();
+            services.AddScoped<VenmoApi>(container =>
+            {
+                var logger = container.GetRequiredService<ILogger<VenmoApi>>();
+                return new VenmoApi(logger);
+            });
+            services.AddSingleton<IClock>(SystemClock.Instance);
         }
 
         // This method gets called by the runtime. Use this method to configure the HTTP request pipeline.

@@ -70,6 +70,23 @@
         <p>Example: <code>/venmo complete accept 456734987329744567 134534987329743846</code></p>
         <p>Example: <code>/venmo complete accept all</code></p>
     </div>
+    <h4>/venmo schedule {recurrence:required} {execution date:required} {payment command:required}</h4>
+    <div class="indent">
+        <p>Example: <code>/venmo schedule every beginning of the month pay $10 for Netflix to testuser</code></p>
+        <p>this would pay $10 every 1st of the month to testuser</p>
+        <p>note that scheduled Venmos will always execute at 12 PM on the scheduled day unless otherwise specified and will never execute on the current day, so for example if today is Wednesday and you schedule a Venmo for Wednesday it will be scheduled for next week's Wednesday</p>
+        <p>recurrence: either <code>every</code> meaning repeated or <code>on</code> OR <code>at</code> meaning one-time</p>
+        <p>execution date: supports <code>day</code> or <code>tomorrow</code>, <code>sunday</code>, <code>monday</code>, <code>tuesday</code>, <code>wednesday</code>, <code>thursday</code>, <code>friday</code>, <code>saturday</code>, <code>beginning of the month</code>, <code>end of the month</code>, <code>day of the month (1/2/3/.../29/30/31)</code>, <code><a href="https://en.wikipedia.org/wiki/ISO_8601">ISO 8601 string</a>: examples 2020-02-29 or 2020-02-29T18:30</code></p>
+        <p>payment command: a valid payment command</p>
+    </div>
+    <h4>/venmo schedule list</h4>
+    <div class="indent">
+        <p>list all scheduled Venmos</p>
+    </div>
+    <h4>/venmo schedule delete <code>###</code></h4>
+    <div class="indent">
+        <p>delete the specified scheduled Venmo</p>
+    </div>
     <h4>/venmo code {code:required}</h4>
     <div class="indent">
         <p>Authenticate to Venmo with the specified code. You must authenticate before you can start using other commands.</p>
