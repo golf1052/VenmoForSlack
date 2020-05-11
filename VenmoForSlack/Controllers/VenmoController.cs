@@ -98,8 +98,7 @@ namespace VenmoForSlack.Controllers
             if (string.IsNullOrEmpty(accessToken))
             {
                 logger.LogError($"Couldn't refresh access token for {body.UserId!}");
-                _ = Respond("Access token is expired, Sanders needs to debug this. Go bother him or something.", body.ResponseUrl!);
-                await RequestAuth(body.ResponseUrl!);
+                _ = RequestAuth(body.ResponseUrl!);
             }
             else
             {
