@@ -165,8 +165,7 @@ namespace VenmoForSlack.Controllers
             VenmoApi venmoApi,
             MongoDatabase database)
         {
-            string? expiresDateString = venmoUser.Venmo!.ExpiresIn as string;
-            if (string.IsNullOrEmpty(expiresDateString))
+            if (venmoUser.Venmo!.ExpiresIn == null || venmoUser.Venmo!.ExpiresIn.GetType() == typeof(string))
             {
                 return null;
             }
