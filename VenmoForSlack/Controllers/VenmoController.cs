@@ -8,6 +8,7 @@ using golf1052.SlackAPI;
 using golf1052.SlackAPI.Objects;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Primitives;
 using MongoDB.Bson;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
@@ -164,7 +165,12 @@ namespace VenmoForSlack.Controllers
             VenmoApi venmoApi,
             MongoDatabase database)
         {
-            DateTime expiresDate = (DateTime)venmoUser.Venmo!.ExpiresIn!;
+            string? expiresDateString = venmoUser.Venmo!.ExpiresIn as string;
+            if (string.IsNullOrEmpty(expiresDateString))
+            {
+                return null;
+            }
+            DateTime expiresDate = (DateTime)venmoUser.Venmo!.ExpiresIn;
             if (expiresDate < DateTime.UtcNow)
             {
                 VenmoAuthResponse response;
