@@ -655,6 +655,10 @@ namespace VenmoForSlack.Controllers
                 {
                     ids.Add(recipient);
                 }
+                else if (recipient.StartsWith("id:"))
+                {
+                    ids.Add(recipient);
+                }
                 else
                 {
                     string? id = venmoUser.GetAliasId(recipient);

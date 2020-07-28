@@ -20,7 +20,7 @@ venmo (audience) pay/charge amount for note to recipients
     pay/charge = pay OR charge
     amount = Venmo amount
     note = Venmo message
-    recipients = list of recipients, can specify Venmo username, phone number prefixed with phone: or email prefixed with email:
+    recipients = list of recipients, can specify Venmo username, phone number prefixed with phone: or email prefixed with email: or Venmo id prefixed with id:
 venmo alias id alias
     example: venmo alias 4u$3r1d sam
     set an alias for a Venmo username
