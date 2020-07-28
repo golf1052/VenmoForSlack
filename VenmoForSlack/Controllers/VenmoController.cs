@@ -655,7 +655,7 @@ namespace VenmoForSlack.Controllers
                 {
                     ids.Add(recipient);
                 }
-                else if (recipient.StartsWith("id:"))
+                else if (recipient.StartsWith("user_id:"))
                 {
                     ids.Add(recipient);
                 }
