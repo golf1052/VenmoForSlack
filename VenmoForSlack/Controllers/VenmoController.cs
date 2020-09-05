@@ -8,7 +8,6 @@ using golf1052.SlackAPI;
 using golf1052.SlackAPI.Objects;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Primitives;
 using MongoDB.Bson;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
@@ -30,16 +29,19 @@ namespace VenmoForSlack.Controllers
         private readonly HttpClient httpClient;
         private readonly VenmoApi venmoApi;
         private readonly IClock clock;
+        private readonly HelperMethods helperMethods;
 
         public VenmoController(ILogger<VenmoController> logger,
             HttpClient httpClient,
             VenmoApi venmoApi,
-            IClock clock)
+            IClock clock,
+            HelperMethods helperMethods)
         {
             this.logger = logger;
             this.httpClient = httpClient;
             this.venmoApi = venmoApi;
             this.clock = clock;
+            this.helperMethods = helperMethods;
         }
 
         [HttpGet]
@@ -158,45 +160,7 @@ namespace VenmoForSlack.Controllers
                 return null;
             }
 
-            return await CheckIfAccessTokenIsExpired(venmoUser, venmoApi, database);
-        }
-
-        public static async Task<string?> CheckIfAccessTokenIsExpired(Database.Models.VenmoUser venmoUser,
-            VenmoApi venmoApi,
-            MongoDatabase database)
-        {
-            if (venmoUser.Venmo!.ExpiresIn == null || venmoUser.Venmo!.ExpiresIn.GetType() == typeof(string))
-            {
-                return null;
-            }
-            DateTime expiresDate = (DateTime)venmoUser.Venmo!.ExpiresIn;
-            if (expiresDate < DateTime.UtcNow)
-            {
-                VenmoAuthResponse response;
-                try
-                {
-                    response = await venmoApi.RefreshAuth(venmoUser.Venmo.RefreshToken!);
-                }
-                catch (Exception)
-                {
-                    venmoUser.Venmo = new VenmoAuthObject()
-                    {
-                        AccessToken = "",
-                        ExpiresIn = "",
-                        RefreshToken = "",
-                        UserId = ""
-                    };
-                    database.SaveUser(venmoUser);
-                    return null;
-                }
-
-                venmoUser.Venmo.AccessToken = response.AccessToken;
-                venmoUser.Venmo.ExpiresIn = DateTime.UtcNow + TimeSpan.FromSeconds(response.ExpiresIn);
-                venmoUser.Venmo.RefreshToken = response.RefreshToken;
-
-                database.SaveUser(venmoUser);
-            }
-            return venmoUser.Venmo.AccessToken;
+            return await helperMethods.CheckIfAccessTokenIsExpired(venmoUser, venmoApi, database);
         }
 
         private async Task ParseMessage(string message,
@@ -328,7 +292,7 @@ namespace VenmoForSlack.Controllers
                     ParsedVenmoPayment parsedVenmoPayment;
                     try
                     {
-                        parsedVenmoPayment = ParseVenmoPaymentMessage(splitMessage);
+                        parsedVenmoPayment = helperMethods.ParseVenmoPaymentMessage(splitMessage);
                     }
                     catch (Exception ex)
                     {
@@ -337,7 +301,7 @@ namespace VenmoForSlack.Controllers
                         return;
                     }
 
-                    var response = await VenmoPayment(venmoApi, venmoUser, database, parsedVenmoPayment.Amount,
+                    var response = await helperMethods.VenmoPayment(venmoApi, venmoUser, database, parsedVenmoPayment.Amount,
                         parsedVenmoPayment.Note, parsedVenmoPayment.Recipients, parsedVenmoPayment.Action,
                         parsedVenmoPayment.Audience);
                     
@@ -371,7 +335,7 @@ namespace VenmoForSlack.Controllers
                 else if (splitMessage[1].ToLower() == "schedule")
                 {
                     var slackUsers = await slackApi.UsersList();
-                    SlackUser? slackUser = HelperMethods.GetSlackUser(venmoUser.UserId, slackUsers);
+                    SlackUser? slackUser = helperMethods.GetSlackUser(venmoUser.UserId, slackUsers);
                     if (slackUser == null)
                     {
                         logger.LogError($"While trying to get slack user timezone they disappeared? {venmoUser.UserId}");
@@ -381,77 +345,6 @@ namespace VenmoForSlack.Controllers
                     await ParseScheduleMessage(splitMessage, slackUser.TimeZone, venmoUser, database, responseUrl);
                 }
             }
-        }
-
-        public static ParsedVenmoPayment ParseVenmoPaymentMessage(string[] splitMessage)
-        {
-            string audienceString = "private";
-            if (splitMessage[2].ToLower() == "charge" || splitMessage[2].ToLower() == "pay")
-            {
-                audienceString = splitMessage[1].ToLower();
-                if (audienceString != "public" && audienceString != "friends" && audienceString != "private")
-                {
-                    throw new Exception("Valid payment sharing commands\npublic\nfriend\nprivate");
-                }
-                var list = splitMessage.ToList();
-                list.RemoveAt(1);
-                splitMessage = list.ToArray();
-            }
-
-            VenmoAudience audience;
-            try
-            {
-                audience = VenmoAudienceHelperMethods.FromString(audienceString);
-            }
-            catch (Exception)
-            {
-                throw new Exception("Valid payment sharing commands\npublic\nfriend\nprivate");
-            }
-
-            string which = splitMessage[1];
-            VenmoAction action;
-            
-            try
-            {
-                action = VenmoActionHelperMethods.FromString(which);
-            }
-            catch (Exception)
-            {
-                throw new Exception("Unknown payment type, must be either 'pay' or 'charge'.");
-            }
-
-            if (splitMessage.Length <= 6)
-            {
-                throw new Exception("Invalid payment string.");
-            }
-
-            int forIndex = HelperMethods.FindStringInList(splitMessage, "for");
-            if (forIndex == -1)
-            {
-                throw new Exception("Invalid payment string, you need to include what the payment is \"for\".");
-            }
-
-            string[] amountStringArray = splitMessage[2..forIndex];
-
-            double amount;
-            try
-            {
-                amount = CalculateTotal(amountStringArray.ToList());
-            }
-            catch (Exception)
-            {
-                throw;
-            }
-
-            int toIndex = HelperMethods.FindLastStringInList(splitMessage, "to");
-            if (toIndex < 5)
-            {
-                throw new Exception("Could not find recipients");
-            }
-
-            string note = string.Join(' ', splitMessage[(forIndex + 1)..toIndex]);
-            List<string> recipients = splitMessage[(toIndex + 1)..].ToList();
-            return new ParsedVenmoPayment(amount, note, recipients, action, audience);
         }
 
         private async Task ParseScheduleMessage(string[] splitMessage,
@@ -474,7 +367,7 @@ namespace VenmoForSlack.Controllers
                     ParsedVenmoPayment paymentInfo;
                     try
                     {
-                        paymentInfo = ParseVenmoPaymentMessage(ConvertScheduleMessageIntoPaymentMessage(schedule.Command.Split(' ')));
+                        paymentInfo = helperMethods.ParseVenmoPaymentMessage(helperMethods.ConvertScheduleMessageIntoPaymentMessage(schedule.Command.Split(' ')));
                     }
                     catch (Exception ex)
                     {
@@ -569,7 +462,7 @@ namespace VenmoForSlack.Controllers
             ZonedDateTime scheduledTime;
             try
             {
-                scheduledTime = ScheduleProcessor.ConvertScheduleMessageIntoDateTime(splitMessage, userTimeZone, clock);
+                scheduledTime = helperMethods.ConvertScheduleMessageIntoDateTime(splitMessage, userTimeZone, clock);
             }
             catch (Exception ex)
             {
@@ -578,11 +471,11 @@ namespace VenmoForSlack.Controllers
                 return;
             }
 
-            string[] newSplitMessage = ConvertScheduleMessageIntoPaymentMessage(splitMessage);
+            string[] newSplitMessage = helperMethods.ConvertScheduleMessageIntoPaymentMessage(splitMessage);
             ParsedVenmoPayment parsedVenmoPayment;
             try
             {
-                parsedVenmoPayment = ParseVenmoPaymentMessage(newSplitMessage);
+                parsedVenmoPayment = helperMethods.ParseVenmoPaymentMessage(newSplitMessage);
             }
             catch (Exception ex)
             {
@@ -598,226 +491,13 @@ namespace VenmoForSlack.Controllers
 
             venmoUser.Schedule.Add(new VenmoSchedule()
             {
-                Verb = ScheduleProcessor.GetScheduleMessageVerb(splitMessage),
+                Verb = helperMethods.GetScheduleMessageVerb(splitMessage),
                 NextExecution = scheduledTime.ToDateTimeUtc(),
                 Command = string.Join(' ', splitMessage)
             });
 
             database.SaveUser(venmoUser);
             await Respond($"Scheduled Venmo set! Next execution: {scheduledTime.GetFriendlyZonedDateTimeString()}.", responseUrl);
-        }
-
-        public static string[] ConvertScheduleMessageIntoPaymentMessage(string[] splitMessage)
-        {
-            int payOrChargeIndex = HelperMethods.FindStringInList(splitMessage, "pay");
-            if (payOrChargeIndex == -1)
-            {
-                payOrChargeIndex = HelperMethods.FindStringInList(splitMessage, "charge");
-                if (payOrChargeIndex == -1)
-                {
-                    throw new Exception("Invalid schedule string, could not find \"pay\" or \"charge\" in string.");
-                }
-            }
-
-            if (splitMessage[payOrChargeIndex - 1].ToLower() == "private" ||
-                splitMessage[payOrChargeIndex - 1].ToLower() == "friends" ||
-                splitMessage[payOrChargeIndex - 1].ToLower() == "public")
-            {
-                payOrChargeIndex -= 1;
-            }
-
-            string[] newSplitMessage = new string[splitMessage.Length - payOrChargeIndex + 1];
-            Array.Copy(splitMessage, payOrChargeIndex, newSplitMessage, 1, splitMessage.Length - payOrChargeIndex);
-            newSplitMessage[0] = splitMessage[0];
-            return newSplitMessage;
-        }
-
-        public static async Task<(List<VenmoPaymentWithBalanceResponse> responses, List<string> unprocessedRecipients)> VenmoPayment(
-            VenmoApi venmoApi,
-            Database.Models.VenmoUser venmoUser,
-            MongoDatabase database,
-            double amount,
-            string note,
-            List<string> recipients,
-            VenmoAction action,
-            VenmoAudience venmoAudience = VenmoAudience.Private)
-        {
-            List<Venmo.Models.VenmoUser>? friendsList = null;
-            List<string> ids = new List<string>();
-            List<string> unprocessedRecipients = new List<string>();
-            foreach (var recipient in recipients)
-            {
-                if (recipient.StartsWith("phone:"))
-                {
-                    ids.Add(recipient);
-                }
-                else if (recipient.StartsWith("email:"))
-                {
-                    ids.Add(recipient);
-                }
-                else if (recipient.StartsWith("user_id:"))
-                {
-                    ids.Add(recipient);
-                }
-                else
-                {
-                    string? id = venmoUser.GetAliasId(recipient);
-                    if (id == null)
-                    {
-                        id = venmoUser.GetCachedId(recipient)?.Id;
-                        if (id == null)
-                        {
-                            if (friendsList == null)
-                            {
-                                friendsList = await venmoApi.GetAllFriends();
-                            }
-                            id = VenmoApi.FindFriend(recipient, friendsList);
-                            if (id != null)
-                            {
-                                AddUsernameToCache(recipient, id, venmoUser, database);
-                            }
-                        }
-                    }
-
-                    if (id == null)
-                    {
-                        unprocessedRecipients.Add(recipient);
-                        continue;
-                    }
-                    ids.Add($"user_id:{id}");
-                }
-            }
-
-            List<VenmoPaymentWithBalanceResponse> responses = await venmoApi.PostPayment(amount, note, ids, action, venmoAudience);
-            return (responses, unprocessedRecipients);
-        }
-
-        private static void AddUsernameToCache(string username,
-            string id,
-            Database.Models.VenmoUser venmoUser,
-            MongoDatabase database)
-        {
-            BsonDocument cacheDoc = new BsonDocument()
-            {
-                { "id", id }
-            };
-            if (venmoUser.Cache == null)
-            {
-                venmoUser.Cache = new BsonDocument();
-            }
-            venmoUser.Cache.Add(new BsonElement(username, cacheDoc));
-            database.SaveUser(venmoUser);
-        }
-
-        public static double CalculateTotal(List<string> amountStringList)
-        {
-            string currentSign = string.Empty;
-            double? previousNumber = null;
-            double? currentNumber = null;
-            while (amountStringList.Count > 1)
-            {
-                for (int i = 0; i < amountStringList.Count; i++)
-                {
-                    string copy = amountStringList[i];
-                    if (copy.StartsWith("$"))
-                    {
-                        copy = copy.Substring(1);
-                    }
-                    
-                    if (copy == "+" || copy == "-" || copy == "*" || copy == "/")
-                    {
-                        if (string.IsNullOrEmpty(currentSign))
-                        {
-                            if (previousNumber == null)
-                            {
-                                throw new Exception("Invalid arithmetic string");
-                            }
-                            currentSign = copy;
-                        }
-                        else
-                        {
-                            throw new Exception("Invalid arithmetic string");
-                        }
-                    }
-                    else if (previousNumber == null)
-                    {
-                        bool canParse = double.TryParse(copy, out double number);
-                        if (!canParse)
-                        {
-                            throw new Exception("Invalid arithmetic string");
-                        }
-                        previousNumber = number;
-                    }
-                    else if (currentNumber == null)
-                    {
-                        bool canParse = double.TryParse(copy, out double number);
-                        if (!canParse)
-                        {
-                            throw new Exception("Invalid arithmetic string");
-                        }
-                        currentNumber = number;
-
-                        double result;
-                        try
-                        {
-                            result = Mathify(previousNumber, currentSign, currentNumber);
-                        }
-                        catch (ArithmeticException)
-                        {
-                            throw;
-                        }
-                        amountStringList[i] = result.ToString();
-                        int modifyingI = i;
-                        amountStringList.RemoveAt(modifyingI - 1);
-                        modifyingI -= 1;
-                        amountStringList.RemoveAt(modifyingI - 1);
-                        previousNumber = null;
-                        currentSign = string.Empty;
-                        currentNumber = null;
-                        break;
-                    }
-                }
-            }
-
-            if (amountStringList[0].StartsWith("$"))
-            {
-                amountStringList[0] = amountStringList[0].Substring(1);
-            }
-            bool parsed = double.TryParse(amountStringList[0], out double final);
-            if (!parsed)
-            {
-                throw new Exception("Could not calculate total");
-            }
-            return final;
-        }
-
-        public static double Mathify(double? num1, string? sign, double? num2)
-        {
-            if (num1 == null || sign == null || num2 == null)
-            {
-                throw new ArithmeticException($"An argument is null. {nameof(num1)}: {num1}. {nameof(sign)}: {sign}. {nameof(num2)}: {num2}");
-            }
-
-            if (sign == "+")
-            {
-                return num1.Value + num2.Value;
-            }
-            else if (sign == "-")
-            {
-                return num1.Value - num2.Value;
-            }
-            else if (sign == "*")
-            {
-                return num1.Value * num2.Value;
-            }
-            else if (sign == "/")
-            {
-                return num1.Value / num2.Value;
-            }
-            else
-            {
-                throw new ArithmeticException($"Unknown sign: {sign}");
-            }
         }
 
         private async Task AliasUser(Database.Models.VenmoUser venmoUser,

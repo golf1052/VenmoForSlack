@@ -37,6 +37,11 @@ namespace VenmoForSlack
                 var logger = container.GetRequiredService<ILogger<VenmoApi>>();
                 return new VenmoApi(logger);
             });
+            services.AddScoped<HelperMethods>(container =>
+            {
+                var logger = container.GetRequiredService<ILogger<HelperMethods>>();
+                return new HelperMethods(logger);
+            });
             services.AddSingleton<IClock>(SystemClock.Instance);
         }
 

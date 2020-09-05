@@ -15,7 +15,7 @@ namespace VenmoForSlack.Venmo.Models
         public string? RefreshToken { get; set; }
 
         [JsonProperty("user")]
-        public VenmoUser User { get; set; }
+        public VenmoUser? User { get; set; }
 
         [JsonProperty("balance")]
         public string? Balance { get; set; }

@@ -42,7 +42,8 @@ namespace VenmoForSlack.Venmo
             HttpResponseMessage responseMessage = await Post(url, new FormUrlEncodedContent(data));
             VenmoAuthResponse response = JsonConvert.DeserializeObject<VenmoAuthResponse>(await responseMessage.Content.ReadAsStringAsync());
             AccessToken = response.AccessToken;
-            UserId = response.User.Id;
+            // User id will not be null here, it's returned by the Venmo API
+            UserId = response.User?.Id;
             return response;
         }
 
@@ -69,7 +70,6 @@ namespace VenmoForSlack.Venmo
             logger.LogInformation(responseString);
             VenmoAuthResponse response = JsonConvert.DeserializeObject<VenmoAuthResponse>(responseString);
             AccessToken = response.AccessToken;
-            UserId = response.User.Id;
             logger.LogInformation("Refreshed token successfully");
             return response;
         }

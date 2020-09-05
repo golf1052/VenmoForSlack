@@ -21,11 +21,17 @@ namespace VenmoForSlack
         public static void Main(string[] args)
         {
             var host = CreateHostBuilder(args).Build();
-            ScheduleProcessor scheduleProcessor = new ScheduleProcessor(
-                host.Services.GetRequiredService<ILogger<ScheduleProcessor>>(),
-                host.Services.GetRequiredService<ILogger<VenmoApi>>(),
-                host.Services.GetRequiredService<HttpClient>(),
-                host.Services.GetRequiredService<IClock>());
+            using (var serviceScope = host.Services.CreateScope())
+            {
+                var services = serviceScope.ServiceProvider;
+                ScheduleProcessor scheduleProcessor = new ScheduleProcessor(
+                services.GetRequiredService<ILogger<ScheduleProcessor>>(),
+                services.GetRequiredService<ILogger<VenmoApi>>(),
+                services.GetRequiredService<HttpClient>(),
+                services.GetRequiredService<IClock>(),
+                services.GetRequiredService<HelperMethods>());
+            }
+            
             CreateHostBuilder(args).Build().Run();
         }
 
