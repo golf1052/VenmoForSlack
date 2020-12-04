@@ -67,7 +67,7 @@ namespace VenmoForSlack.Controllers
 
                 SaveWebhookId(databaseInfo.Value.user, request.Data.Id, request.Data.Status, databaseInfo.Value.database);
                 SlackCore slackApi = new SlackCore(databaseInfo.Value.workspaceInfo.BotToken);
-                message += $"{request.Data.Actor.DisplayName} ";
+                message += $"{request.Data.Actor.DisplayName} ({request.Data.Actor.Username}) ";
 
                 if (request.Data.Action == "pay")
                 {
@@ -124,7 +124,7 @@ namespace VenmoForSlack.Controllers
                     return "";
                 }
                 SaveWebhookId(databaseInfo.Value.user, request.Data.Id, request.Data.Status, databaseInfo.Value.database);
-                message += $"{request.Data.Target.User.DisplayName} ";
+                message += $"{request.Data.Target.User.DisplayName} ({request.Data.Target.User.Username}) ";
                 
                 if (request.Data.Status == "settled")
                 {

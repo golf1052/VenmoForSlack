@@ -375,7 +375,7 @@ namespace VenmoForSlack.Controllers
 
                         if (parsedVenmoPayment.Action == VenmoAction.Charge)
                         {
-                            string responseText = $"Successfully charged {r.Data!.Payment.Target.User.Username} ${r.Data.Payment.Amount} for {r.Data.Payment.Note}. Audience is {r.Data.Payment.Audience}";
+                            string responseText = $"Successfully charged {r.Data!.Payment.Target.User.DisplayName} ({r.Data!.Payment.Target.User.Username}) ${r.Data.Payment.Amount} for {r.Data.Payment.Note}. Audience is {r.Data.Payment.Audience}";
                             List<IBlock> blocks = new List<IBlock>()
                             {
                                 new Section(TextObject.CreatePlainTextObject(responseText), null, null,
@@ -386,11 +386,11 @@ namespace VenmoForSlack.Controllers
                         }
                         else if (parsedVenmoPayment.Action == VenmoAction.Pay)
                         {
-                            await Respond($"Successfully paid {r.Data!.Payment.Target.User.Username} ${r.Data.Payment.Amount} for {r.Data.Payment.Note}. Audience is {r.Data.Payment.Audience}", responseUrl);
+                            await Respond($"Successfully paid {r.Data!.Payment.Target.User.DisplayName} ({r.Data!.Payment.Target.User.Username}) ${r.Data.Payment.Amount} for {r.Data.Payment.Note}. Audience is {r.Data.Payment.Audience}", responseUrl);
                         }
                         else
                         {
-                            await Respond($"Successfully ??? {r.Data!.Payment.Target.User.Username} ${r.Data.Payment.Amount} for {r.Data.Payment.Note}. Audience is {r.Data.Payment.Audience}", responseUrl);
+                            await Respond($"Successfully ??? {r.Data!.Payment.Target.User.DisplayName} ({r.Data!.Payment.Target.User.Username}) ${r.Data.Payment.Amount} for {r.Data.Payment.Note}. Audience is {r.Data.Payment.Audience}", responseUrl);
                         }
                     }
 
