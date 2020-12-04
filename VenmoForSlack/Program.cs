@@ -8,6 +8,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Console;
 using MongoDB.Driver;
 using NodaTime;
 using VenmoForSlack.Venmo;
@@ -37,6 +38,15 @@ namespace VenmoForSlack
 
         public static IHostBuilder CreateHostBuilder(string[] args) =>
             Host.CreateDefaultBuilder(args)
+                .ConfigureLogging(logging =>
+                {
+                    logging.AddConsole()
+                    .AddSimpleConsole(configure =>
+                    {
+                        configure.UseUtcTimestamp = true;
+                        configure.TimestampFormat = "[yyyy-MM-ddTHH:mm:ss] ";
+                    });
+                })
                 .ConfigureWebHostDefaults(webBuilder =>
                 {
                     webBuilder.UseStartup<Startup>()

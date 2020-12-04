@@ -37,6 +37,7 @@ namespace VenmoForSlack.Controllers
         [HttpPost]
         public async Task<string> HandleWebhook([FromBody] JObject data)
         {
+            logger.LogInformation(data.ToString(Formatting.None));
             VenmoWebhookRequest request = data.ToObject<VenmoWebhookRequest>()!;
             string message = string.Empty;
             if (request.Type == "payment.created")
