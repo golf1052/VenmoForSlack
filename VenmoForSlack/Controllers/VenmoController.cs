@@ -102,7 +102,9 @@ namespace VenmoForSlack.Controllers
             SlackCore slackApi = new SlackCore(GetWorkspaceInfo(body.TeamId!).BotToken);
 
             MongoDatabase database = GetTeamDatabase(body.TeamId!);
-            if (string.IsNullOrEmpty(body.Text))
+
+            string requestText = ProcessRequestText(body.Text);
+            if (string.IsNullOrEmpty(requestText))
             {
                 string? token = await GetAccessToken(body.UserId!, database);
                 if (string.IsNullOrEmpty(token))
@@ -116,7 +118,7 @@ namespace VenmoForSlack.Controllers
                 }
             }
 
-            string[] splitMessage = body.Text.Split(' ');
+            string[] splitMessage = requestText.Split(' ');
             if (splitMessage.Length > 0)
             {
                 if (splitMessage[0].ToLower() == "code")
@@ -133,8 +135,33 @@ namespace VenmoForSlack.Controllers
                 }
             }
 
-            _ = GetAccessTokenAndParseMessage($"venmo {body.Text!}", body.UserId!, body.ResponseUrl!, database, slackApi);
+            _ = GetAccessTokenAndParseMessage($"venmo {requestText}", body.UserId!, body.ResponseUrl!, database, slackApi);
             return "";
+        }
+
+        private string ProcessRequestText(string? text)
+        {
+            // If the request is sent on mobile (at least the iOS app) body.Text will be of the form: "/venmo balance"
+            // On desktop it's just "balance". The desktop form is documented and was the original way it worked.
+            // The mobile difference is undocumnted and annoying.
+
+            // Also the desktop client will trim body.Text, mobile will send body.Text as is
+            if (string.IsNullOrEmpty(text))
+            {
+                return string.Empty;
+            }
+            else
+            {
+                text = text.Trim();
+                if (text.StartsWith('/'))
+                {
+                    return text.Substring(7);
+                }
+                else
+                {
+                    return text;
+                }
+            }
         }
 
         private string? VerifyRequest(string teamId, string token)
