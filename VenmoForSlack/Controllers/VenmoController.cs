@@ -5,12 +5,16 @@ using System.Net.Http;
 using System.Text;
 using System.Threading.Tasks;
 using golf1052.SlackAPI;
+using golf1052.SlackAPI.BlockKit.BlockElements;
+using golf1052.SlackAPI.BlockKit.Blocks;
+using golf1052.SlackAPI.BlockKit.CompositionObjects;
 using golf1052.SlackAPI.Objects;
+using golf1052.SlackAPI.Objects.Requests;
+using golf1052.SlackAPI.Objects.Responses;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging;
 using MongoDB.Bson;
 using Newtonsoft.Json;
-using Newtonsoft.Json.Linq;
 using NodaTime;
 using VenmoForSlack.Controllers.Models;
 using VenmoForSlack.Database;
@@ -30,6 +34,7 @@ namespace VenmoForSlack.Controllers
         private readonly VenmoApi venmoApi;
         private readonly IClock clock;
         private readonly HelperMethods helperMethods;
+        private readonly JsonSerializerSettings blockKitSerializer;
 
         public VenmoController(ILogger<VenmoController> logger,
             HttpClient httpClient,
@@ -42,6 +47,7 @@ namespace VenmoForSlack.Controllers
             this.venmoApi = venmoApi;
             this.clock = clock;
             this.helperMethods = helperMethods;
+            blockKitSerializer = new golf1052.SlackAPI.HelperMethods().GetBlockKitSerializer();
         }
 
         [HttpGet]
@@ -57,24 +63,45 @@ namespace VenmoForSlack.Controllers
             }
         }
 
+        [HttpPost("/interactive")]
+        public void HandleInteractiveRequest([FromForm]string payload)
+        {
+            BlockActionResponse payloadObject = JsonConvert.DeserializeObject<BlockActionResponse>(payload, blockKitSerializer)!;
+            logger.LogInformation(payload.ToString());
+
+            string? verifyRequestResponse = VerifyRequest(payloadObject.Team.Id!, payloadObject.Token);
+            if (!string.IsNullOrEmpty(verifyRequestResponse))
+            {
+                _ = Respond(verifyRequestResponse, payloadObject.ResponseUrl);
+                return;
+            }
+
+            SlackCore slackApi = new SlackCore(GetWorkspaceInfo(payloadObject.Team.Id!).BotToken);
+            MongoDatabase database = GetTeamDatabase(payloadObject.Team.Id!);
+
+            if (payloadObject.Actions.Count > 0)
+            {
+                string blockType = (string)payloadObject.Actions[0]["type"]!;
+                if (blockType == "button")
+                {
+                    Button button = payloadObject.Actions[0].ToObject<Button>()!;
+                    _ = GetAccessTokenAndParseMessage(button.Value, payloadObject.User.Id, payloadObject.ResponseUrl, database, slackApi);
+                }
+            }
+        }
+
         [HttpPost]
         public async Task<string> HandleRequest([FromForm] SlackRequest body)
         {
-            if (!Settings.SettingsObject.Workspaces.Workspaces.ContainsKey(body.TeamId!))
+            string? verifyRequestResponse = VerifyRequest(body.TeamId!, body.Token!);
+            if (!string.IsNullOrEmpty(verifyRequestResponse))
             {
-                logger.LogInformation($"Unknown team: {body.TeamId}");
-                return "Team not configured to use Venmo";
+                return verifyRequestResponse;
             }
 
-            WorkspaceInfo workspaceInfo = Settings.SettingsObject.Workspaces.Workspaces[body.TeamId!].ToObject<WorkspaceInfo>()!;
-            if (workspaceInfo!.Token != body.Token)
-            {
-                logger.LogInformation($"Unknown token for team {body.TeamId}: {body.Token}");
-                return "Team verification token mismatch";
-            }
-            SlackCore slackApi = new SlackCore(workspaceInfo.BotToken);
+            SlackCore slackApi = new SlackCore(GetWorkspaceInfo(body.TeamId!).BotToken);
 
-            MongoDatabase database = new MongoDatabase(body.TeamId!);
+            MongoDatabase database = GetTeamDatabase(body.TeamId!);
             if (string.IsNullOrEmpty(body.Text))
             {
                 string? token = await GetAccessToken(body.UserId!, database);
@@ -105,19 +132,52 @@ namespace VenmoForSlack.Controllers
                     }
                 }
             }
-            
-            string? accessToken = await GetAccessToken(body.UserId!, database);
+
+            _ = GetAccessTokenAndParseMessage($"venmo {body.Text!}", body.UserId!, body.ResponseUrl!, database, slackApi);
+            return "";
+        }
+
+        private string? VerifyRequest(string teamId, string token)
+        {
+            if (!Settings.SettingsObject.Workspaces.Workspaces.ContainsKey(teamId))
+            {
+                logger.LogInformation($"Unknown team: {teamId}");
+                return "Team not configured to use Venmo";
+            }
+
+            WorkspaceInfo workspaceInfo = GetWorkspaceInfo(teamId);
+            if (workspaceInfo!.Token != token)
+            {
+                logger.LogInformation($"Unknown token for team {teamId}: {token}");
+                return "Team verification token mismatch";
+            }
+
+            return null;
+        }
+
+        private WorkspaceInfo GetWorkspaceInfo(string teamId)
+        {
+            return Settings.SettingsObject.Workspaces.Workspaces[teamId].ToObject<WorkspaceInfo>()!;
+        }
+
+        private MongoDatabase GetTeamDatabase(string teamId)
+        {
+            return new MongoDatabase(teamId);
+        }
+
+        private async Task GetAccessTokenAndParseMessage(string text, string userId, string responseUrl, MongoDatabase database, SlackCore slackApi)
+        {
+            string? accessToken = await GetAccessToken(userId, database);
             if (string.IsNullOrEmpty(accessToken))
             {
-                logger.LogError($"Couldn't refresh access token for {body.UserId!}");
-                _ = RequestAuth(body.ResponseUrl!);
+                logger.LogError($"Couldn't refresh access token for {userId}");
+                _ = RequestAuth(responseUrl);
             }
             else
             {
                 venmoApi.AccessToken = accessToken;
-                _ = ParseMessage($"venmo {body.Text!}", body.UserId!, body.ResponseUrl!, database, slackApi);
+                _ = ParseMessage(text, userId, responseUrl, database, slackApi);
             }
-            return "";
         }
 
         private async Task CompleteAuth(string code, string userId, string responseUrl, MongoDatabase database)
@@ -130,7 +190,7 @@ namespace VenmoForSlack.Controllers
                 AccessToken = response.AccessToken,
                 ExpiresIn = DateTime.UtcNow + TimeSpan.FromSeconds(response.ExpiresIn),
                 RefreshToken = response.RefreshToken,
-                UserId = response.User.Id
+                UserId = response.User!.Id
             };
             database.SaveUser(venmoUser);
             await Respond("Authentication complete", responseUrl);
@@ -315,7 +375,14 @@ namespace VenmoForSlack.Controllers
 
                         if (parsedVenmoPayment.Action == VenmoAction.Charge)
                         {
-                            await Respond($"Successfully charged {r.Data!.Payment.Target.User.Username} ${r.Data.Payment.Amount} for {r.Data.Payment.Note}. Audience is {r.Data.Payment.Audience}", responseUrl);
+                            string responseText = $"Successfully charged {r.Data!.Payment.Target.User.Username} ${r.Data.Payment.Amount} for {r.Data.Payment.Note}. Audience is {r.Data.Payment.Audience}";
+                            List<IBlock> blocks = new List<IBlock>()
+                            {
+                                new Section(TextObject.CreatePlainTextObject(responseText), null, null,
+                                    new golf1052.SlackAPI.BlockKit.BlockElements.Image(r.Data!.Payment.Target.User.ProfilePictureUrl, $"Venmo profile picture of {r.Data!.Payment.Target.User.DisplayName}")),
+                                new Actions(new Button("Cancel", "cancelButton", null, $"venmo complete cancel {r.Data.Payment.Id}", null, null))
+                            };
+                            await Respond(responseText, blocks, responseUrl);
                         }
                         else if (parsedVenmoPayment.Action == VenmoAction.Pay)
                         {
@@ -812,11 +879,15 @@ namespace VenmoForSlack.Controllers
                 "this format\nvenmo code CODE", responseUrl);
         }
 
-        private async Task Respond(string message, string responseUrl)
+        private async Task Respond(string text, string responseUrl)
         {
-            JObject o = new JObject();
-            o["text"] = message;
-            await httpClient.PostAsync(responseUrl, new StringContent(o.ToString(Formatting.None), Encoding.UTF8, "application/json"));
+            await Respond(text, null, responseUrl);
+        }
+
+        private async Task Respond(string text, List<IBlock>? blocks, string responseUrl)
+        {
+            SlackMessage message = new SlackMessage(text, blocks);
+            await httpClient.PostAsync(responseUrl, new StringContent(JsonConvert.SerializeObject(message, blockKitSerializer), Encoding.UTF8, "application/json"));
         }
     }
 }

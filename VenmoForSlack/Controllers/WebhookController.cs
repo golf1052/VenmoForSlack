@@ -1,8 +1,13 @@
 using System.Collections.Generic;
+using System.Linq;
 using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Text;
 using System.Threading.Tasks;
+using golf1052.SlackAPI;
+using golf1052.SlackAPI.BlockKit.BlockElements;
+using golf1052.SlackAPI.BlockKit.Blocks;
+using golf1052.SlackAPI.BlockKit.CompositionObjects;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging;
 using Newtonsoft.Json;
@@ -18,6 +23,13 @@ namespace VenmoForSlack.Controllers
     [Route("[controller]")]
     public class WebhookController : ControllerBase
     {
+        // TODO: this shouldn't be static...
+        private static JsonSerializerSettings blockKitSerializer;
+        static WebhookController()
+        {
+            blockKitSerializer = new golf1052.SlackAPI.HelperMethods().GetBlockKitSerializer();
+        }
+
         private readonly ILogger logger;
         private readonly HttpClient httpClient;
 
@@ -48,11 +60,13 @@ namespace VenmoForSlack.Controllers
                     return "";
                 }
 
-                if (WebhookSeenBefore(databaseInfo.Value.user, request.Data.Id))
+                if (WebhookSeenBefore(databaseInfo.Value.user, request.Data.Id, request.Data.Status))
                 {
                     return "";
                 }
-                SaveWebhookId(databaseInfo.Value.user, request.Data.Id, databaseInfo.Value.database);
+
+                SaveWebhookId(databaseInfo.Value.user, request.Data.Id, request.Data.Status, databaseInfo.Value.database);
+                SlackCore slackApi = new SlackCore(databaseInfo.Value.workspaceInfo.BotToken);
                 message += $"{request.Data.Actor.DisplayName} ";
 
                 if (request.Data.Action == "pay")
@@ -65,15 +79,29 @@ namespace VenmoForSlack.Controllers
                 }
                 message += $"${request.Data.Amount:F2} for {request.Data.Note}";
 
+                if (request.Data.Action == "pay")
+                {
+                    await SendSlackMessage(databaseInfo.Value.workspaceInfo, message, databaseInfo.Value.user.UserId, httpClient);
+                }
+                
                 if (request.Data.Action == "charge")
                 {
                     message += $" | ID: {request.Data.Id}";
-                }
-                await SendSlackMessage(databaseInfo.Value.workspaceInfo, message, databaseInfo.Value.user.UserId, httpClient);
-                if (request.Data.Action == "charge")
-                {
-                    string acceptCommand = $"/venmo complete accept {request.Data.Id}";
-                    await SendSlackMessage(databaseInfo.Value.workspaceInfo, acceptCommand, databaseInfo.Value.user.UserId, httpClient);
+                    string acceptCommand = $"venmo complete accept {request.Data.Id}";
+                    List<IBlock> blocks = new List<IBlock>();
+                    blocks.Add(new Section(TextObject.CreatePlainTextObject($"{message}\n/{acceptCommand}"), null, null,
+                        new golf1052.SlackAPI.BlockKit.BlockElements.Image(request.Data.Actor.ProfilePictureUrl,
+                            $"Venmo profile picture of {request.Data.Actor.DisplayName}")));
+                    blocks.Add(new Actions(
+                        new Button("Accept", "acceptButton", null, acceptCommand, null, null),
+                        new Button("Reject", "rejectButton", null, $"venmo complete reject {request.Data.Id}", null, null)));
+
+                    var channels = await slackApi.ConversationsList(false, "im");
+                    var userChannel = channels.FirstOrDefault(c => c.User == databaseInfo.Value.user.UserId);
+                    if (userChannel != null)
+                    {
+                        await SendSlackMessage(databaseInfo.Value.workspaceInfo, $"{message}\n/{acceptCommand}", blocks, userChannel.Id, httpClient);
+                    }
                 }
             }
             else if (request.Type == "payment.updated")
@@ -82,17 +110,20 @@ namespace VenmoForSlack.Controllers
                 {
                     return "";
                 }
-                var databaseInfo = GetUserFromDatabases(request.Data.Target.User.Id);
+
+                // When user charges someone else and their payment is completed the user is the actor.
+                // When user is charged by someone else and their payment is completed the user is the target.
+                var databaseInfo = GetUserFromDatabases(request.Data.Actor.Id);
                 if (databaseInfo == null)
                 {
                     return "";
                 }
 
-                if (WebhookSeenBefore(databaseInfo.Value.user, request.Data.Id))
+                if (WebhookSeenBefore(databaseInfo.Value.user, request.Data.Id, request.Data.Status))
                 {
                     return "";
                 }
-                SaveWebhookId(databaseInfo.Value.user, request.Data.Id, databaseInfo.Value.database);
+                SaveWebhookId(databaseInfo.Value.user, request.Data.Id, request.Data.Status, databaseInfo.Value.database);
                 message += $"{request.Data.Target.User.DisplayName} ";
                 
                 if (request.Data.Status == "settled")
@@ -114,10 +145,23 @@ namespace VenmoForSlack.Controllers
             string channel,
             HttpClient httpClient)
         {
+            await SendSlackMessage(workspaceInfo, message, null, channel, httpClient);
+        }
+
+        public static async Task SendSlackMessage(WorkspaceInfo workspaceInfo,
+            string text,
+            List<IBlock>? blocks,
+            string channel,
+            HttpClient httpClient)
+        {
             string botToken = workspaceInfo.BotToken;
             JObject o = new JObject();
             o["channel"] = channel;
-            o["text"] = message;
+            o["text"] = text;
+            if (blocks != null)
+            {
+                o["blocks"] = JsonConvert.SerializeObject(blocks, Formatting.None, blockKitSerializer);
+            }
             o["username"] = "Venmo";
             o["icon_url"] = "https://s3-us-west-2.amazonaws.com/slack-files2/avatars/2015-11-10/14228813844_49fae5f9cad227c8c1b5_72.jpg";
             HttpRequestMessage requestMessage = new HttpRequestMessage(HttpMethod.Post, "https://slack.com/api/chat.postMessage");
@@ -144,12 +188,12 @@ namespace VenmoForSlack.Controllers
             return null;
         }
 
-        private bool WebhookSeenBefore(Database.Models.VenmoUser venmoUser, string webhookId)
+        private bool WebhookSeenBefore(Database.Models.VenmoUser venmoUser, string webhookId, string status)
         {
             if (!string.IsNullOrEmpty(venmoUser.LastWebhook))
             {
-                string lastWebhookId = venmoUser.LastWebhook;
-                if (webhookId == lastWebhookId)
+                string lastWebhook = venmoUser.LastWebhook;
+                if ($"{status}.{webhookId}" == lastWebhook)
                 {
                     return true;
                 }
@@ -157,9 +201,12 @@ namespace VenmoForSlack.Controllers
             return false;
         }
 
-        private void SaveWebhookId(Database.Models.VenmoUser venmoUser, string webhookId, MongoDatabase database)
+        private void SaveWebhookId(Database.Models.VenmoUser venmoUser, string webhookId, string status, MongoDatabase database)
         {
-            venmoUser.LastWebhook = webhookId;
+            // Need to save both the status and webhook id because the webhook id is the same between the payment.created and the payment.updated
+            // which means if only the webhook id is stored when the payment is updated the notification will not be routed to the user because
+            // the webhook id was seen during its creation.
+            venmoUser.LastWebhook = $"{status}.{webhookId}";
             database.SaveUser(venmoUser);
         }
     }
