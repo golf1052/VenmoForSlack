@@ -233,12 +233,24 @@ namespace VenmoForSlack.Venmo
                 {
                     throw;
                 }
-                pendingPayments.AddRange(response.Data);
+                pendingPayments.AddRange(response.Data!);
                 limit = response.Data.Count;
                 offset += response.Data.Count;
             }
             while (response.Pagination != null && response.Pagination.Next != null);
             return pendingPayments;
+        }
+
+        public async Task<VenmoUserSearchResponse> SearchUsers(string query, int limit = 50, int offset = 0)
+        {
+            Url url = new Url(BaseUrl).AppendPathSegment("users")
+                .SetQueryParam("query", query)
+                .SetQueryParam("limit", limit)
+                .SetQueryParam("offset", offset)
+                .SetQueryParam("access_token", AccessToken);
+            HttpResponseMessage responseMessage = await Get(url);
+            VenmoUserSearchResponse response = GetObject<VenmoUserSearchResponse>(await responseMessage.Content.ReadAsStringAsync());
+            return response;
         }
 
         public static string? FindFriend(string recipient, List<VenmoUser> friends)

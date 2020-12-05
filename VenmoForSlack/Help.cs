@@ -10,6 +10,9 @@ venmo balance
     returns your Venmo balance
 venmo last
     returns your last command
+venmo search query
+    example: venmo search golf1052
+    searches for a Venmo user, search will return up to 10 users
 venmo (audience) pay/charge amount for note to recipients
     example: venmo public charge $10.00 for lunch to testuser phone:5555555555 email:example@example.com
     supports basic arithmetic, does not follow order of operations or support parenthesis

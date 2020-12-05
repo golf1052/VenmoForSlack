@@ -307,6 +307,58 @@ namespace VenmoForSlack.Controllers
                         await Respond("Valid pending commands\npending\npending to\npending from", responseUrl);
                     }
                 }
+                else if (splitMessage[1].ToLower() == "search")
+                {
+                    if (splitMessage.Length == 2)
+                    {
+                        await Respond("User search requires a search query", responseUrl);
+                    }
+                    else
+                    {
+                        string searchQuery = string.Join(' ', splitMessage, 2, splitMessage.Length - 2);
+                        VenmoUserSearchResponse response;
+                        try
+                        {
+                            response = await venmoApi.SearchUsers(searchQuery);
+                        }
+                        catch (VenmoException ex)
+                        {
+                            logger.LogWarning(ex, $"Exception while searching users. Search query: {searchQuery}");
+                            await Respond(ex.Message, responseUrl);
+                            return;
+                        }
+                        List<string> responseLines = new List<string>();
+                        List<IBlock> sections = new List<IBlock>();
+                        Section userCountSection;
+                        string userCountText;
+                        if (response.Data.Count >= 50)
+                        {
+                            userCountText = "Found more than 50 users";
+                        }
+                        else if (response.Data.Count == 1)
+                        {
+                            userCountText = $"Found {response.Data.Count} user";
+                        }
+                        else
+                        {
+                            userCountText = $"Found {response.Data.Count} users";
+                        }
+                        userCountSection = new Section(userCountText);
+                        responseLines.Add(userCountText);
+                        sections.Add(userCountSection);
+
+                        foreach (var user in response.Data.Take(10))
+                        {
+                            string text = $"{user.DisplayName} ({user.Username})\nID: {user.Id}";
+                            Section section = new Section(TextObject.CreatePlainTextObject(text),
+                                null, null, helperMethods.GetVenmoUserProfileImage(user));
+                            responseLines.Add(text);
+                            sections.Add(section);
+                        }
+
+                        await Respond(string.Join('\n', responseLines), sections, responseUrl);
+                    }
+                }
                 else if (splitMessage[1].ToLower() == "accept" ||
                     splitMessage[1].ToLower() == "reject" ||
                     splitMessage[1].ToLower() == "cancel")
@@ -406,7 +458,7 @@ namespace VenmoForSlack.Controllers
                             List<IBlock> blocks = new List<IBlock>()
                             {
                                 new Section(TextObject.CreatePlainTextObject(responseText), null, null,
-                                    new golf1052.SlackAPI.BlockKit.BlockElements.Image(r.Data!.Payment.Target.User.ProfilePictureUrl, $"Venmo profile picture of {r.Data!.Payment.Target.User.DisplayName}")),
+                                    helperMethods.GetVenmoUserProfileImage(r.Data!.Payment.Target.User)),
                                 new Actions(new Button("Cancel", "cancelButton", null, $"venmo complete cancel {r.Data.Payment.Id}", null, null))
                             };
                             await Respond(responseText, blocks, responseUrl);

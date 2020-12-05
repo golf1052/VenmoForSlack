@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
+using golf1052.SlackAPI.BlockKit.BlockElements;
 using golf1052.SlackAPI.Objects;
 using Microsoft.Extensions.Logging;
 using MongoDB.Bson;
@@ -21,6 +22,16 @@ namespace VenmoForSlack
         public HelperMethods(ILogger<HelperMethods> logger)
         {
             this.logger = logger;
+        }
+
+        public Image GetVenmoUserProfileImage(Venmo.Models.VenmoUser user)
+        {
+            return new Image(user.ProfilePictureUrl, GetVenmoUserProfilePictureAltText(user));
+        }
+
+        public string GetVenmoUserProfilePictureAltText(Venmo.Models.VenmoUser user)
+        {
+            return $"Venmo profile picture of {user.DisplayName}";
         }
 
         public ZonedDateTime ConvertScheduleMessageIntoDateTime(string[] splitMessage,
