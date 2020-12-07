@@ -32,12 +32,15 @@ namespace VenmoForSlack.Controllers
 
         private readonly ILogger logger;
         private readonly HttpClient httpClient;
+        private readonly ILogger<MongoDatabase> mongoDatabaseLogger;
 
         public WebhookController(ILogger<WebhookController> logger,
-            HttpClient httpClient)
+            HttpClient httpClient,
+            ILogger<MongoDatabase> mongoDatabaseLogger)
         {
             this.logger = logger;
             this.httpClient = httpClient;
+            this.mongoDatabaseLogger = mongoDatabaseLogger;
         }
 
         [HttpGet]
@@ -175,7 +178,7 @@ namespace VenmoForSlack.Controllers
             foreach (var workspace in Settings.SettingsObject.Workspaces.Workspaces)
             {
                 WorkspaceInfo workspaceInfo = workspace.Value.ToObject<WorkspaceInfo>()!;
-                MongoDatabase database = new MongoDatabase(workspace.Key);
+                MongoDatabase database = new MongoDatabase(workspace.Key, mongoDatabaseLogger);
                 List<Database.Models.VenmoUser> users = database.GetAllUsers();
                 foreach (var user in users)
                 {

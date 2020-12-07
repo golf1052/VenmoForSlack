@@ -35,6 +35,7 @@ namespace VenmoForSlack.Controllers
         private readonly VenmoApi venmoApi;
         private readonly IClock clock;
         private readonly HelperMethods helperMethods;
+        private readonly ILogger<MongoDatabase> mongoDatabaseLogger;
         private readonly JsonSerializerSettings blockKitSerializer;
         private readonly JsonSerializer jsonSerializer;
 
@@ -42,13 +43,15 @@ namespace VenmoForSlack.Controllers
             HttpClient httpClient,
             VenmoApi venmoApi,
             IClock clock,
-            HelperMethods helperMethods)
+            HelperMethods helperMethods,
+            ILogger<MongoDatabase> mongoDatabaseLogger)
         {
             this.logger = logger;
             this.httpClient = httpClient;
             this.venmoApi = venmoApi;
             this.clock = clock;
             this.helperMethods = helperMethods;
+            this.mongoDatabaseLogger = mongoDatabaseLogger;
             blockKitSerializer = new golf1052.SlackAPI.HelperMethods().GetBlockKitSerializer();
             jsonSerializer = JsonSerializer.CreateDefault(blockKitSerializer);
         }
@@ -114,7 +117,7 @@ namespace VenmoForSlack.Controllers
             }
 
             SlackCore slackApi = new SlackCore(GetWorkspaceInfo(payloadObject.Team.Id!).BotToken);
-            MongoDatabase database = GetTeamDatabase(payloadObject.Team.Id!);
+            MongoDatabase database = GetTeamDatabase(payloadObject.Team.Id!, mongoDatabaseLogger);
 
             if (payloadObject.Actions.Count > 0)
             {
@@ -213,7 +216,7 @@ namespace VenmoForSlack.Controllers
 
             SlackCore slackApi = new SlackCore(GetWorkspaceInfo(body.TeamId!).BotToken);
 
-            MongoDatabase database = GetTeamDatabase(body.TeamId!);
+            MongoDatabase database = GetTeamDatabase(body.TeamId!, mongoDatabaseLogger);
 
             string requestText = ProcessRequestText(body.Text);
             if (string.IsNullOrEmpty(requestText))
@@ -299,9 +302,9 @@ namespace VenmoForSlack.Controllers
             return Settings.SettingsObject.Workspaces.Workspaces[teamId].ToObject<WorkspaceInfo>()!;
         }
 
-        private MongoDatabase GetTeamDatabase(string teamId)
+        private MongoDatabase GetTeamDatabase(string teamId, ILogger<MongoDatabase> logger)
         {
-            return new MongoDatabase(teamId);
+            return new MongoDatabase(teamId, logger);
         }
 
         private async Task GetAccessTokenAndParseMessage(string text, string userId, Action<string, List<IBlock>?> respondAction, MongoDatabase database, SlackCore slackApi)
@@ -368,9 +371,6 @@ namespace VenmoForSlack.Controllers
             MongoDatabase database,
             SlackCore slackApi)
         {
-            MeResponse me = await venmoApi.GetMe();
-            string venmoId = me.Data.User.Id;
-            venmoApi.UserId = venmoId;
             Database.Models.VenmoUser venmoUser = database.GetUser(userId)!;
             string[] splitMessage = message.Split(' ');
             if (splitMessage.Length == 1)
@@ -393,6 +393,37 @@ namespace VenmoForSlack.Controllers
             {
                 await PublishHomeTabView(userId, slackApi);
             }
+            else if (splitMessage[1].ToLower() == "delete")
+            {
+                if (splitMessage.Length == 2)
+                {
+                    venmoUser.Venmo = new VenmoAuthObject()
+                    {
+                        AccessToken = "",
+                        ExpiresIn = "",
+                        RefreshToken = "",
+                        UserId = ""
+                    };
+                    database.SaveUser(venmoUser);
+                    respondAction.Invoke("Deleted Venmo authentication information from database. If you want to delete all of your user information from the database run /venmo delete everything", null);
+                }
+                else if (splitMessage.Length == 3 && splitMessage[2].ToLower() == "everything")
+                {
+                    bool? deleteResult = database.DeleteUser(userId);
+                    if (deleteResult == null)
+                    {
+                        respondAction.Invoke("Error while deleting you from the database. Ask Sanders to investigate.", null);
+                    }
+                    else if (!deleteResult.Value)
+                    {
+                        respondAction.Invoke("It looks like you're not in the database? Ask Sanders to investigate.", null);
+                    }
+                    else
+                    {
+                        respondAction.Invoke("Deleted all of your information from the database.", null);
+                    }
+                }
+            }
             else
             {
                 SaveLastMessage(message, venmoUser, database);
@@ -404,14 +435,14 @@ namespace VenmoForSlack.Controllers
                 {
                     if (splitMessage.Length == 2)
                     {
-                        await GetVenmoPending("to", me.Data.User.Id, respondAction);
+                        await GetVenmoPending("to", await GetVenmoUserId(), respondAction);
                     }
                     else if (splitMessage.Length == 3)
                     {
                         string which = splitMessage[2].ToLower();
                         if (which == "to" || which == "from")
                         {
-                            await GetVenmoPending(which, me.Data.User.Id, respondAction);
+                            await GetVenmoPending(which, await GetVenmoUserId(), respondAction);
                         }
                         else
                         {
@@ -493,12 +524,12 @@ namespace VenmoForSlack.Controllers
                         {
                             if (splitMessage[3].ToLower() == "all")
                             {
-                                await VenmoCompleteAll(which, venmoId, respondAction);
+                                await VenmoCompleteAll(which, await GetVenmoUserId(), respondAction);
                             }
                             else
                             {
                                 List<string> completionNumbers = splitMessage[3..].ToList();
-                                await VenmoComplete(which, completionNumbers, venmoId, respondAction);
+                                await VenmoComplete(which, completionNumbers, await GetVenmoUserId(), respondAction);
                             }
                         }
                         else
@@ -627,6 +658,17 @@ namespace VenmoForSlack.Controllers
                     ParseScheduleMessage(splitMessage, slackUser.TimeZone, venmoUser, database, respondAction);
                 }
             }
+        }
+
+        private async Task<string> GetVenmoUserId()
+        {
+            if (string.IsNullOrEmpty(venmoApi.UserId))
+            {
+                MeResponse me = await venmoApi.GetMe();
+                string venmoId = me.Data.User.Id;
+                venmoApi.UserId = venmoId;
+            }
+            return venmoApi.UserId;
         }
 
         private async Task<List<string>> ProcessVenmoPayments(

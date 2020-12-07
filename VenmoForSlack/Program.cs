@@ -11,6 +11,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Console;
 using MongoDB.Driver;
 using NodaTime;
+using VenmoForSlack.Database;
 using VenmoForSlack.Venmo;
 
 namespace VenmoForSlack
@@ -28,6 +29,7 @@ namespace VenmoForSlack
                 ScheduleProcessor scheduleProcessor = new ScheduleProcessor(
                 services.GetRequiredService<ILogger<ScheduleProcessor>>(),
                 services.GetRequiredService<ILogger<VenmoApi>>(),
+                services.GetRequiredService<ILogger<MongoDatabase>>(),
                 services.GetRequiredService<HttpClient>(),
                 services.GetRequiredService<IClock>(),
                 services.GetRequiredService<HelperMethods>());

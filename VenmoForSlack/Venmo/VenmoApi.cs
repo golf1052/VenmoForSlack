@@ -16,7 +16,7 @@ namespace VenmoForSlack.Venmo
         private readonly ILogger logger;
         private HttpClient httpClient;
         public string? AccessToken { private get; set; }
-        public string? UserId { private get; set; }
+        public string? UserId { get; set; }
 
         public VenmoApi(ILogger<VenmoApi> logger)
         {
@@ -84,6 +84,12 @@ namespace VenmoForSlack.Venmo
 
         public async Task<FriendsResponse> GetFriends(int limit = 20, int offset = 0)
         {
+            if (string.IsNullOrEmpty(UserId))
+            {
+                // If UserId hasn't been loaded yet then retrieve it
+                MeResponse me = await GetMe();
+                UserId = me.Data.User.Id;
+            }
             Url url = new Url(BaseUrl).AppendPathSegments("users", UserId, "friends")
                 .SetQueryParams(new {
                     limit = limit,

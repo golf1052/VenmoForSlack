@@ -18,6 +18,7 @@ namespace VenmoForSlack
     {
         private readonly ILogger<ScheduleProcessor> logger;
         private readonly ILogger<VenmoApi> venmoApiLogger;
+        private readonly ILogger<MongoDatabase> mongoDatabaseLogger;
         private readonly HttpClient httpClient;
         private readonly IClock clock;
         private readonly HelperMethods helperMethods;
@@ -26,12 +27,14 @@ namespace VenmoForSlack
 
         public ScheduleProcessor(ILogger<ScheduleProcessor> logger,
             ILogger<VenmoApi> venmoApiLogger,
+            ILogger<MongoDatabase> mongoDatabaseLogger,
             HttpClient httpClient,
             IClock clock,
             HelperMethods helperMethods)
         {
             this.logger = logger;
             this.venmoApiLogger = venmoApiLogger;
+            this.mongoDatabaseLogger = mongoDatabaseLogger;
             this.httpClient = httpClient;
             this.clock = clock;
             this.helperMethods = helperMethods;
@@ -47,7 +50,7 @@ namespace VenmoForSlack
                 foreach (var workspace in Settings.SettingsObject.Workspaces.Workspaces)
                 {
                     WorkspaceInfo workspaceInfo = workspace.Value.ToObject<WorkspaceInfo>()!;
-                    MongoDatabase database = new MongoDatabase(workspace.Key);
+                    MongoDatabase database = new MongoDatabase(workspace.Key, mongoDatabaseLogger);
                     SlackCore slackApi = new SlackCore(workspaceInfo.BotToken);
                     var slackUsers = await slackApi.UsersList();
                     List<Database.Models.VenmoUser> users = database.GetAllUsers();
