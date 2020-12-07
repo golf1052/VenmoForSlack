@@ -5,16 +5,17 @@ using System.Net.Http;
 using System.Text;
 using System.Threading.Tasks;
 using golf1052.SlackAPI;
+using golf1052.SlackAPI.BlockKit;
 using golf1052.SlackAPI.BlockKit.BlockElements;
 using golf1052.SlackAPI.BlockKit.Blocks;
 using golf1052.SlackAPI.BlockKit.CompositionObjects;
+using golf1052.SlackAPI.Events;
 using golf1052.SlackAPI.Objects;
-using golf1052.SlackAPI.Objects.Requests;
-using golf1052.SlackAPI.Objects.Responses;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging;
 using MongoDB.Bson;
 using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
 using NodaTime;
 using VenmoForSlack.Controllers.Models;
 using VenmoForSlack.Database;
@@ -35,6 +36,7 @@ namespace VenmoForSlack.Controllers
         private readonly IClock clock;
         private readonly HelperMethods helperMethods;
         private readonly JsonSerializerSettings blockKitSerializer;
+        private readonly JsonSerializer jsonSerializer;
 
         public VenmoController(ILogger<VenmoController> logger,
             HttpClient httpClient,
@@ -48,6 +50,7 @@ namespace VenmoForSlack.Controllers
             this.clock = clock;
             this.helperMethods = helperMethods;
             blockKitSerializer = new golf1052.SlackAPI.HelperMethods().GetBlockKitSerializer();
+            jsonSerializer = JsonSerializer.CreateDefault(blockKitSerializer);
         }
 
         [HttpGet]
@@ -63,12 +66,46 @@ namespace VenmoForSlack.Controllers
             }
         }
 
+        [HttpPost("/events")]
+        public async Task<string> HandleEvents()
+        {
+            string bodyString = string.Empty;
+            using (System.IO.StreamReader reader = new System.IO.StreamReader(Request.Body))
+            {
+                bodyString = await reader.ReadToEndAsync();
+            }
+            JObject bodyObject = JObject.Parse(bodyString);
+            if ((string)bodyObject["type"]! == UrlVerification.Type)
+            {
+                UrlVerification urlVerification = bodyObject.ToObject<UrlVerification>(jsonSerializer)!;
+                return urlVerification.Challenge;
+            }
+            else
+            {
+                SlackEventWrapper eventWrapper = bodyObject.ToObject<SlackEventWrapper>(jsonSerializer)!;
+                string? verifyEventRequest = VerifyRequest(eventWrapper.TeamId, eventWrapper.Token);
+                if (!string.IsNullOrEmpty(verifyEventRequest))
+                {
+                    return "";
+                }
+
+                SlackCore slackApi = new SlackCore(GetWorkspaceInfo(eventWrapper.TeamId).BotToken);
+                if ((string)eventWrapper.Event["type"]! == AppHomeOpened.Type)
+                {
+                    AppHomeOpened appHomeOpened = eventWrapper.Event.ToObject<AppHomeOpened>(jsonSerializer)!;
+                    if (appHomeOpened.Tab == "home")
+                    {
+                        await PublishHomeTabView(appHomeOpened.User, slackApi);
+                    }
+                }
+            }
+            return "";
+        }
+
         [HttpPost("/interactive")]
-        public void HandleInteractiveRequest([FromForm]string payload)
+        public async Task HandleInteractiveRequest([FromForm]string payload)
         {
             BlockActionResponse payloadObject = JsonConvert.DeserializeObject<BlockActionResponse>(payload, blockKitSerializer)!;
-            logger.LogInformation(payload.ToString());
-
             string? verifyRequestResponse = VerifyRequest(payloadObject.Team.Id!, payloadObject.Token);
             if (!string.IsNullOrEmpty(verifyRequestResponse))
             {
@@ -84,8 +121,70 @@ namespace VenmoForSlack.Controllers
                 string blockType = (string)payloadObject.Actions[0]["type"]!;
                 if (blockType == "button")
                 {
-                    Button button = payloadObject.Actions[0].ToObject<Button>()!;
-                    _ = GetAccessTokenAndParseMessage(button.Value, payloadObject.User.Id, payloadObject.ResponseUrl, database, slackApi);
+                    Button button = payloadObject.Actions[0].ToObject<Button>(jsonSerializer)!;
+                    if (button.ActionId == "submitButton")
+                    {
+                        JObject valuesObject = (JObject)payloadObject.View.State["values"]!;
+                        Dictionary<string, string?> values = new Dictionary<string, string?>();
+                        foreach (var o in valuesObject)
+                        {
+                            if (o.Value != null && o.Value.HasValues)
+                            {
+                                JProperty property = (JProperty)o.Value.First!;
+                                JObject propertyValue = (JObject)property.Value;
+                                if ((string)propertyValue["type"]! == "radio_buttons")
+                                {
+                                    values.Add(property.Name, (string?)propertyValue["selected_option"]!["value"]);
+                                }
+                                else if ((string)propertyValue["type"]! == "plain_text_input")
+                                {
+                                    values.Add(property.Name, (string?)propertyValue["value"]);
+                                }
+                            }
+                        }
+
+                        List<string> errorList = new List<string>();
+                        foreach (var value in values)
+                        {
+                            if (string.IsNullOrEmpty(value.Value))
+                            {
+                                if (value.Key == "amountInput")
+                                {
+                                    errorList.Add("Must include an amount.");
+                                }
+                                else if (value.Key == "noteInput")
+                                {
+                                    errorList.Add("Must include a note.");
+                                }
+                                else if (value.Key == "recipientsInput")
+                                {
+                                    errorList.Add("Must include at least one recipient.");
+                                }
+                            }
+                        }
+
+                        var channels = await slackApi.ConversationsList(false, "im");
+                        string userChannel = channels.FirstOrDefault(c => c.User == payloadObject.User.Id)!.Id;
+                        // Interactions from the "Home" tab don't have a responseUrl so to send any messages we need to
+                        // use the chat.postMessage API.
+                        Action<string, List<IBlock>?> respondAction = (text, blocks) =>
+                        {
+                            _ = slackApi.ChatPostMessage(text, userChannel, blocks: blocks);
+                        };
+                        if (errorList.Count > 0)
+                        {
+                            respondAction.Invoke(string.Join('\n', errorList), null);
+                        }
+                        else
+                        {
+                            string venmoString = $"venmo {values["audienceRadio"]} {values["typeRadio"]} {values["amountInput"]} for {values["noteInput"]} to {values["recipientsInput"]}";
+                            _ = GetAccessTokenAndParseMessage(venmoString, payloadObject.User.Id, respondAction, database, slackApi);
+                        }
+                    }
+                    else
+                    {
+                        _ = GetAccessTokenAndParseMessage(button.Value, payloadObject.User.Id, CreateRespondAction(payloadObject.ResponseUrl), database, slackApi);
+                    }
                 }
             }
         }
@@ -129,13 +228,13 @@ namespace VenmoForSlack.Controllers
                     }
                     else
                     {
-                        _ = CompleteAuth(splitMessage[1], body.UserId!, body.ResponseUrl!, database);
+                        _ = CompleteAuth(splitMessage[1], body.UserId!, CreateRespondAction(body.ResponseUrl!), database);
                         return "";
                     }
                 }
             }
 
-            _ = GetAccessTokenAndParseMessage($"venmo {requestText}", body.UserId!, body.ResponseUrl!, database, slackApi);
+            _ = GetAccessTokenAndParseMessage($"venmo {requestText}", body.UserId!, CreateRespondAction(body.ResponseUrl!), database, slackApi);
             return "";
         }
 
@@ -192,22 +291,22 @@ namespace VenmoForSlack.Controllers
             return new MongoDatabase(teamId);
         }
 
-        private async Task GetAccessTokenAndParseMessage(string text, string userId, string responseUrl, MongoDatabase database, SlackCore slackApi)
+        private async Task GetAccessTokenAndParseMessage(string text, string userId, Action<string, List<IBlock>?> respondAction, MongoDatabase database, SlackCore slackApi)
         {
             string? accessToken = await GetAccessToken(userId, database);
             if (string.IsNullOrEmpty(accessToken))
             {
                 logger.LogError($"Couldn't refresh access token for {userId}");
-                _ = RequestAuth(responseUrl);
+                RequestAuth(respondAction);
             }
             else
             {
                 venmoApi.AccessToken = accessToken;
-                _ = ParseMessage(text, userId, responseUrl, database, slackApi);
+                _ = ParseMessage(text, userId, respondAction, database, slackApi);
             }
         }
 
-        private async Task CompleteAuth(string code, string userId, string responseUrl, MongoDatabase database)
+        private async Task CompleteAuth(string code, string userId, Action<string, List<IBlock>?> respondAction, MongoDatabase database)
         {
             VenmoAuthResponse response = await venmoApi.CompleteAuth(code);
             // The user gets created before we hit this so it's always not null
@@ -220,7 +319,7 @@ namespace VenmoForSlack.Controllers
                 UserId = response.User!.Id
             };
             database.SaveUser(venmoUser);
-            await Respond("Authentication complete", responseUrl);
+            respondAction.Invoke("Authentication complete", null);
         }
 
         private async Task<string?> GetAccessToken(string userId, MongoDatabase database)
@@ -252,7 +351,7 @@ namespace VenmoForSlack.Controllers
 
         private async Task ParseMessage(string message,
             string userId,
-            string responseUrl,
+            Action<string, List<IBlock>?> respondAction,
             MongoDatabase database,
             SlackCore slackApi)
         {
@@ -263,55 +362,59 @@ namespace VenmoForSlack.Controllers
             string[] splitMessage = message.Split(' ');
             if (splitMessage.Length == 1)
             {
-                await Respond(Help.HelpMessage, responseUrl);
+                respondAction.Invoke(Help.HelpMessage, null);
             }
             else if (splitMessage[1].ToLower() == "help")
             {
-                await Respond(Help.HelpMessage, responseUrl);
+                respondAction.Invoke(Help.HelpMessage, null);
             }
             else if (splitMessage[1].ToLower() == "last")
             {
-                await GetLastMessage(venmoUser, responseUrl);
+                GetLastMessage(venmoUser, respondAction);
             }
             else if (splitMessage[1].ToLower() == "code")
             {
-                await CompleteAuth(splitMessage[2], userId, responseUrl, database);
+                await CompleteAuth(splitMessage[2], userId, respondAction, database);
+            }
+            else if (splitMessage[1].ToLower() == "create")
+            {
+                await PublishHomeTabView(userId, slackApi);
             }
             else
             {
                 SaveLastMessage(message, venmoUser, database);
                 if (splitMessage[1].ToLower() == "balance")
                 {
-                    await GetVenmoBalance(responseUrl);
+                    await GetVenmoBalance(respondAction);
                 }
                 else if (splitMessage[1].ToLower() == "pending")
                 {
                     if (splitMessage.Length == 2)
                     {
-                        await GetVenmoPending("to", me.Data.User.Id, responseUrl);
+                        await GetVenmoPending("to", me.Data.User.Id, respondAction);
                     }
                     else if (splitMessage.Length == 3)
                     {
                         string which = splitMessage[2].ToLower();
                         if (which == "to" || which == "from")
                         {
-                            await GetVenmoPending(which, me.Data.User.Id, responseUrl);
+                            await GetVenmoPending(which, me.Data.User.Id, respondAction);
                         }
                         else
                         {
-                            await Respond("Valid pending commands\npending\npending to\npending from", responseUrl);
+                            respondAction.Invoke("Valid pending commands\npending\npending to\npending from", null);
                         }
                     }
                     else
                     {
-                        await Respond("Valid pending commands\npending\npending to\npending from", responseUrl);
+                        respondAction.Invoke("Valid pending commands\npending\npending to\npending from", null);
                     }
                 }
                 else if (splitMessage[1].ToLower() == "search")
                 {
                     if (splitMessage.Length == 2)
                     {
-                        await Respond("User search requires a search query", responseUrl);
+                        respondAction.Invoke("User search requires a search query", null);
                     }
                     else
                     {
@@ -324,7 +427,7 @@ namespace VenmoForSlack.Controllers
                         catch (VenmoException ex)
                         {
                             logger.LogWarning(ex, $"Exception while searching users. Search query: {searchQuery}");
-                            await Respond(ex.Message, responseUrl);
+                            respondAction.Invoke(ex.Message, null);
                             return;
                         }
                         List<string> responseLines = new List<string>();
@@ -356,7 +459,7 @@ namespace VenmoForSlack.Controllers
                             sections.Add(section);
                         }
 
-                        await Respond(string.Join('\n', responseLines), sections, responseUrl);
+                        respondAction.Invoke(string.Join('\n', responseLines), sections);
                     }
                 }
                 else if (splitMessage[1].ToLower() == "accept" ||
@@ -365,7 +468,7 @@ namespace VenmoForSlack.Controllers
                 {
                     if (splitMessage.Length == 3)
                     {
-                        await Respond($"You probably meant: /venmo complete {splitMessage[1].ToLower()} {splitMessage[2].ToLower()}", responseUrl);
+                        respondAction.Invoke($"You probably meant: /venmo complete {splitMessage[1].ToLower()} {splitMessage[2].ToLower()}", null);
                     }
                 }
                 else if (splitMessage[1].ToLower() == "complete")
@@ -377,22 +480,22 @@ namespace VenmoForSlack.Controllers
                         {
                             if (splitMessage[3].ToLower() == "all")
                             {
-                                await VenmoCompleteAll(which, venmoId, responseUrl);
+                                await VenmoCompleteAll(which, venmoId, respondAction);
                             }
                             else
                             {
                                 List<string> completionNumbers = splitMessage[3..].ToList();
-                                await VenmoComplete(which, completionNumbers, venmoId, responseUrl);
+                                await VenmoComplete(which, completionNumbers, venmoId, respondAction);
                             }
                         }
                         else
                         {
-                            await Respond("Valid complete commands\nvenmo complete accept #\nvenmo complete reject #\nvenmo complete cancel #", responseUrl);
+                            respondAction.Invoke("Valid complete commands\nvenmo complete accept #\nvenmo complete reject #\nvenmo complete cancel #", null);
                         }
                     }
                     else
                     {
-                        await Respond("Valid complete commands\nvenmo complete accept #\nvenmo complete reject #\nvenmo complete cancel #", responseUrl);
+                        respondAction.Invoke("Valid complete commands\nvenmo complete accept #\nvenmo complete reject #\nvenmo complete cancel #", null);
                     }
                 }
                 else if (splitMessage[1].ToLower() == "alias")
@@ -401,27 +504,27 @@ namespace VenmoForSlack.Controllers
                     {
                         if (splitMessage[2].ToLower() == "delete")
                         {
-                            await DeleteAlias(venmoUser, splitMessage[3].ToLower(), responseUrl, database);
+                            DeleteAlias(venmoUser, splitMessage[3].ToLower(), respondAction, database);
                         }
                         else
                         {
                             string friendUsername = splitMessage[2];
                             string alias = splitMessage[3].ToLower();
-                            await AliasUser(venmoUser, friendUsername, alias, responseUrl, database);
+                            await AliasUser(venmoUser, friendUsername, alias, respondAction, database);
                         }
                     }
                     else if (splitMessage.Length == 3 && splitMessage[2].ToLower() == "list")
                     {
-                        await ListAliases(venmoUser, responseUrl);
+                        ListAliases(venmoUser, respondAction);
                     }
                     else
                     {
-                        await Respond("Invalid alias command, your alias probably has a space in it.", responseUrl);
+                        respondAction.Invoke("Invalid alias command, your alias probably has a space in it.", null);
                     }
                 }
                 else if (splitMessage.Length <= 2)
                 {
-                    await Respond("Invalid payment string", responseUrl);
+                    respondAction.Invoke("Invalid payment string", null);
                 }
                 else if (splitMessage[1].ToLower() == "charge" ||
                     splitMessage[2].ToLower() == "charge" ||
@@ -436,7 +539,7 @@ namespace VenmoForSlack.Controllers
                     catch (Exception ex)
                     {
                         logger.LogWarning(ex, $"Unable to parse message. Message: {string.Join(' ', splitMessage)}");
-                        await Respond(ex.Message, responseUrl);
+                        respondAction.Invoke(ex.Message, null);
                         return;
                     }
 
@@ -448,7 +551,7 @@ namespace VenmoForSlack.Controllers
                     {
                         if (!string.IsNullOrEmpty(r.Error))
                         {
-                            await Respond($"Venmo error: {r.Error}", responseUrl);
+                            respondAction.Invoke($"Venmo error: {r.Error}", null);
                             continue;
                         }
 
@@ -461,21 +564,21 @@ namespace VenmoForSlack.Controllers
                                     helperMethods.GetVenmoUserProfileImage(r.Data!.Payment.Target.User)),
                                 new Actions(new Button("Cancel", "cancelButton", null, $"venmo complete cancel {r.Data.Payment.Id}", null, null))
                             };
-                            await Respond(responseText, blocks, responseUrl);
+                            respondAction.Invoke(responseText, blocks);
                         }
                         else if (parsedVenmoPayment.Action == VenmoAction.Pay)
                         {
-                            await Respond($"Successfully paid {r.Data!.Payment.Target.User.DisplayName} ({r.Data!.Payment.Target.User.Username}) ${r.Data.Payment.Amount} for {r.Data.Payment.Note}. Audience is {r.Data.Payment.Audience}", responseUrl);
+                            respondAction.Invoke($"Successfully paid {r.Data!.Payment.Target.User.DisplayName} ({r.Data!.Payment.Target.User.Username}) ${r.Data.Payment.Amount} for {r.Data.Payment.Note}. Audience is {r.Data.Payment.Audience}", null);
                         }
                         else
                         {
-                            await Respond($"Successfully ??? {r.Data!.Payment.Target.User.DisplayName} ({r.Data!.Payment.Target.User.Username}) ${r.Data.Payment.Amount} for {r.Data.Payment.Note}. Audience is {r.Data.Payment.Audience}", responseUrl);
+                            respondAction.Invoke($"Successfully ??? {r.Data!.Payment.Target.User.DisplayName} ({r.Data!.Payment.Target.User.Username}) ${r.Data.Payment.Amount} for {r.Data.Payment.Note}. Audience is {r.Data.Payment.Audience}", null);
                         }
                     }
 
                     foreach (var u in response.unprocessedRecipients)
                     {
-                        await Respond($"You are not friends with {u}.", responseUrl);
+                        respondAction.Invoke($"You are not friends with {u}.", null);
                     }
                 }
                 else if (splitMessage[1].ToLower() == "schedule")
@@ -485,25 +588,25 @@ namespace VenmoForSlack.Controllers
                     if (slackUser == null)
                     {
                         logger.LogError($"While trying to get slack user timezone they disappeared? {venmoUser.UserId}");
-                        await Respond("While trying to get your timzone you disappeared?", responseUrl);
+                        respondAction.Invoke("While trying to get your timzone you disappeared?", null);
                         return;
                     }
-                    await ParseScheduleMessage(splitMessage, slackUser.TimeZone, venmoUser, database, responseUrl);
+                    ParseScheduleMessage(splitMessage, slackUser.TimeZone, venmoUser, database, respondAction);
                 }
             }
         }
 
-        private async Task ParseScheduleMessage(string[] splitMessage,
+        private void ParseScheduleMessage(string[] splitMessage,
             string userTimeZone,
             Database.Models.VenmoUser venmoUser,
             MongoDatabase database,
-            string responseUrl)
+            Action<string, List<IBlock>?> respondAction)
         {
             if (splitMessage[2].ToLower() == "list")
             {
                 if (venmoUser.Schedule == null || venmoUser.Schedule.Count == 0)
                 {
-                    await Respond("You have no scheduled Venmos.", responseUrl);
+                    respondAction.Invoke("You have no scheduled Venmos.", null);
                     return;
                 }
 
@@ -556,10 +659,10 @@ namespace VenmoForSlack.Controllers
                         actionString = "???";
                     }
 
-                    await Respond($"{i + 1}: {scheduleVerb} {VenmoAudienceHelperMethods.ToString(paymentInfo.Audience)} " +
+                    respondAction.Invoke($"{i + 1}: {scheduleVerb} {VenmoAudienceHelperMethods.ToString(paymentInfo.Audience)} " +
                         $"{actionString} of ${paymentInfo.Amount} for {paymentInfo.Note} to " +
                         $"{string.Join(' ', paymentInfo.Recipients)}. This will be {processedString} at " +
-                        $"{nextExecutionInTimeZone.GetFriendlyZonedDateTimeString()}.", responseUrl);
+                        $"{nextExecutionInTimeZone.GetFriendlyZonedDateTimeString()}.", null);
                 }
                 return;
             }
@@ -568,13 +671,13 @@ namespace VenmoForSlack.Controllers
             {
                 if (venmoUser.Schedule == null || venmoUser.Schedule.Count == 0)
                 {
-                    await Respond("You have no scheduled Venmos.", responseUrl);
+                    respondAction.Invoke("You have no scheduled Venmos.", null);
                     return;
                 }
 
                 if (splitMessage.Length != 4)
                 {
-                    await Respond("Incorrect schedule delete message. Expected /venmo schedule delete ###", responseUrl);
+                    respondAction.Invoke("Incorrect schedule delete message. Expected /venmo schedule delete ###", null);
                     return;
                 }
 
@@ -584,11 +687,11 @@ namespace VenmoForSlack.Controllers
                     {
                         if (venmoUser.Schedule.Count == 1)
                         {
-                            await Respond($"Not a valid schedule number, you only have {venmoUser.Schedule.Count} scheduled item.", responseUrl);
+                            respondAction.Invoke($"Not a valid schedule number, you only have {venmoUser.Schedule.Count} scheduled item.", null);
                         }
                         else
                         {
-                            await Respond($"Not a valid schedule number, you only have {venmoUser.Schedule.Count} scheduled items.", responseUrl);
+                            respondAction.Invoke($"Not a valid schedule number, you only have {venmoUser.Schedule.Count} scheduled items.", null);
                         }
                         return;
                     }
@@ -596,11 +699,11 @@ namespace VenmoForSlack.Controllers
                     string commandToRemove = venmoUser.Schedule[number - 1].Command;
                     venmoUser.Schedule.RemoveAt(number - 1);
                     database.SaveUser(venmoUser);
-                    await Respond($"Removed /{commandToRemove}", responseUrl);
+                    respondAction.Invoke($"Removed /{commandToRemove}", null);
                 }
                 else
                 {
-                    await Respond($"Expected schedule number to delete. Got {splitMessage[3]} instead.", responseUrl);
+                    respondAction.Invoke($"Expected schedule number to delete. Got {splitMessage[3]} instead.", null);
                 }
                 return;
             }
@@ -613,7 +716,7 @@ namespace VenmoForSlack.Controllers
             catch (Exception ex)
             {
                 logger.LogWarning(ex, $"{string.Join(' ', splitMessage)}");
-                await Respond(ex.Message, responseUrl);
+                respondAction.Invoke(ex.Message, null);
                 return;
             }
 
@@ -626,7 +729,7 @@ namespace VenmoForSlack.Controllers
             catch (Exception ex)
             {
                 logger.LogWarning(ex, $"{string.Join(' ', splitMessage)}");
-                await Respond(ex.Message, responseUrl);
+                respondAction.Invoke(ex.Message, null);
                 return;
             }
 
@@ -643,20 +746,20 @@ namespace VenmoForSlack.Controllers
             });
 
             database.SaveUser(venmoUser);
-            await Respond($"Scheduled Venmo set! Next execution: {scheduledTime.GetFriendlyZonedDateTimeString()}.", responseUrl);
+            respondAction.Invoke($"Scheduled Venmo set! Next execution: {scheduledTime.GetFriendlyZonedDateTimeString()}.", null);
         }
 
         private async Task AliasUser(Database.Models.VenmoUser venmoUser,
             string friendUsername,
             string alias,
-            string responseUrl,
+            Action<string, List<IBlock>?> respondAction,
             MongoDatabase database)
         {
             List<Venmo.Models.VenmoUser> friends = await venmoApi.GetAllFriends();
             string? friendId = VenmoApi.FindFriend(friendUsername, friends);
             if (friendId == null)
             {
-                await Respond($"You are not friends with {friendUsername}", responseUrl);
+                respondAction.Invoke($"You are not friends with {friendUsername}", null);
                 return;
             }
 
@@ -671,11 +774,11 @@ namespace VenmoForSlack.Controllers
             }
             venmoUser.Alias.Add(new BsonElement(alias, aliasDoc));
             database.SaveUser(venmoUser);
-            await Respond("Alias set!", responseUrl);
+            respondAction.Invoke("Alias set!", null);
         }
 
-        private async Task ListAliases(Database.Models.VenmoUser venmoUser,
-            string responseUrl)
+        private void ListAliases(Database.Models.VenmoUser venmoUser,
+            Action<string, List<IBlock>?> respondAction)
         {
             if (venmoUser.Alias != null)
             {
@@ -684,17 +787,17 @@ namespace VenmoForSlack.Controllers
                 {
                     aliasList.Add($"{alias.Name} points to {alias.Value.AsBsonDocument.GetElement("username").Value.AsString}");
                 }
-                await Respond(string.Join('\n', aliasList), responseUrl);
+                respondAction.Invoke(string.Join('\n', aliasList), null);
             }
             else
             {
-                await Respond("You have no aliases set.", responseUrl);
+                respondAction.Invoke("You have no aliases set.", null);
             }
         }
 
-        private async Task DeleteAlias(Database.Models.VenmoUser venmoUser,
+        private void DeleteAlias(Database.Models.VenmoUser venmoUser,
             string alias,
-            string responseUrl,
+            Action<string, List<IBlock>?> respondAction,
             MongoDatabase database)
         {
             VenmoAlias? venmoAlias = venmoUser.GetAlias(alias);
@@ -702,25 +805,25 @@ namespace VenmoForSlack.Controllers
             {
                 venmoUser.Alias!.Remove(alias);
                 database.SaveUser(venmoUser);
-                await Respond("Alias deleted!", responseUrl);
+                respondAction.Invoke("Alias deleted!", null);
             }
             else
             {
-                await Respond("That alias does not exist.", responseUrl);
+                respondAction.Invoke("That alias does not exist.", null);
             }
         }
 
         private async Task VenmoComplete(string which,
             List<string> completionNumbers,
             string venmoId,
-            string responseUrl)
+            Action<string, List<IBlock>?> respondAction)
         {
             foreach (var stringNumber in completionNumbers)
             {
                 bool canParse = long.TryParse(stringNumber, out long number);
                 if (!canParse)
                 {
-                    _ = Respond($"Payment completion number, {stringNumber}, must be a number", responseUrl);
+                    respondAction.Invoke($"Payment completion number, {stringNumber}, must be a number", null);
                     continue;
                 }
 
@@ -745,7 +848,7 @@ namespace VenmoForSlack.Controllers
                 }
                 catch (VenmoException ex)
                 {
-                    _ = Respond(ex.Message, responseUrl);
+                    respondAction.Invoke(ex.Message, null);
                     continue;
                 }
                 
@@ -753,7 +856,7 @@ namespace VenmoForSlack.Controllers
                 {
                     if (action == "cancel")
                     {
-                        _ = Respond($"{checkResponse.Data.Actor.DisplayName} requested ${checkResponse.Data.Amount:F2} for {checkResponse.Data.Note}. You cannot cancel it!", responseUrl);
+                        respondAction.Invoke($"{checkResponse.Data.Actor.DisplayName} requested ${checkResponse.Data.Amount:F2} for {checkResponse.Data.Note}. You cannot cancel it!", null);
                         continue;
                     }
                 }
@@ -761,7 +864,7 @@ namespace VenmoForSlack.Controllers
                 {
                     if (action == "approve" || action == "deny")
                     {
-                        _ = Respond($"You requested ${checkResponse.Data.Amount:F2} for {checkResponse.Data.Note}. You can try `/venmo complete cancel {stringNumber}` if you don't want to be paid back.", responseUrl);
+                        respondAction.Invoke($"You requested ${checkResponse.Data.Amount:F2} for {checkResponse.Data.Note}. You can try `/venmo complete cancel {stringNumber}` if you don't want to be paid back.", null);
                         continue;
                     }
                 }
@@ -772,26 +875,26 @@ namespace VenmoForSlack.Controllers
                 }
                 catch (VenmoException ex)
                 {
-                    _ = Respond(ex.Message, responseUrl);
+                    respondAction.Invoke(ex.Message, null);
                     continue;
                 }
                 
                 if (action == "approve")
                 {
-                    _ = Respond("Venmo completed!", responseUrl);
+                    respondAction.Invoke("Venmo completed!", null);
                 }
                 else if (action == "deny")
                 {
-                    _ = Respond("Venmo rejected!", responseUrl);
+                    respondAction.Invoke("Venmo rejected!", null);
                 }
                 else if (action == "cancel")
                 {
-                    _ = Respond("Venmo canceled!", responseUrl);
+                    respondAction.Invoke("Venmo canceled!", null);
                 }
             }
         }
 
-        private async Task VenmoCompleteAll(string which, string venmoId, string responseUrl)
+        private async Task VenmoCompleteAll(string which, string venmoId, Action<string, List<IBlock>?> respondAction)
         {
             string action = string.Empty;
             if (which == "accept")
@@ -814,7 +917,7 @@ namespace VenmoForSlack.Controllers
             }
             catch (VenmoException ex)
             {
-                await Respond(ex.Message, responseUrl);
+                respondAction.Invoke(ex.Message, null);
                 return;
             }
 
@@ -841,15 +944,15 @@ namespace VenmoForSlack.Controllers
             {
                 if (action == "approve")
                 {
-                    await Respond("No Venmos to accept", responseUrl);
+                    respondAction.Invoke("No Venmos to accept", null);
                 }
                 else if (action == "deny")
                 {
-                    await Respond("No Venmos to reject", responseUrl);
+                    respondAction.Invoke("No Venmos to reject", null);
                 }
                 else if (action == "cancel")
                 {
-                    await Respond("No venmos to cancel", responseUrl);
+                    respondAction.Invoke("No venmos to cancel", null);
                 }
                 return;
             }
@@ -862,34 +965,34 @@ namespace VenmoForSlack.Controllers
                 }
                 catch (VenmoException ex)
                 {
-                    _ = Respond(ex.Message, responseUrl);
+                    respondAction.Invoke(ex.Message, null);
                     continue;
                 }
             }
 
             if (action == "approve")
             {
-                await Respond("All Venmos accepted!", responseUrl);
+                respondAction.Invoke("All Venmos accepted!", null);
             }
             else if (action == "deny")
             {
-                await Respond("All Venmos rejected!", responseUrl);
+                respondAction.Invoke("All Venmos rejected!", null);
             }
             else if (action == "cancel")
             {
-                await Respond("All Venmos canceled!", responseUrl);
+                respondAction.Invoke("All Venmos canceled!", null);
             }
         }
 
-        private async Task GetLastMessage(Database.Models.VenmoUser venmoUser, string responseUrl)
+        private void GetLastMessage(Database.Models.VenmoUser venmoUser, Action<string, List<IBlock>?> respondAction)
         {
             if (!string.IsNullOrEmpty(venmoUser.Last))
             {
-                await Respond($"/{venmoUser.Last}", responseUrl);
+                respondAction.Invoke($"/{venmoUser.Last}", null);
             }
             else
             {
-                await Respond("No last message", responseUrl);
+                respondAction.Invoke("No last message", null);
             }
         }
 
@@ -899,7 +1002,7 @@ namespace VenmoForSlack.Controllers
             database.SaveUser(venmoUser);
         }
 
-        private async Task GetVenmoPending(string which, string venmoId, string responseUrl)
+        private async Task GetVenmoPending(string which, string venmoId, Action<string, List<IBlock>?> respondAction)
         {
             List<string> strings = new List<string>();
             try
@@ -925,29 +1028,29 @@ namespace VenmoForSlack.Controllers
                 
                 if (strings.Count == 0)
                 {
-                    await Respond("No pending Venmos", responseUrl);
+                    respondAction.Invoke("No pending Venmos", null);
                 }
                 else
                 {
-                    await Respond(string.Join('\n', strings), responseUrl);
+                    respondAction.Invoke(string.Join('\n', strings), null);
                 }
             }
             catch (VenmoException ex)
             {
-                await Respond(ex.Message, responseUrl);
+                respondAction.Invoke(ex.Message, null);
             }
         }
 
-        private async Task GetVenmoBalance(string responseUrl)
+        private async Task GetVenmoBalance(Action<string, List<IBlock>?> respondAction)
         {
             try
             {
                 MeResponse response = await venmoApi.GetMe();
-                await Respond(response.Data.Balance!, responseUrl);
+                respondAction.Invoke(response.Data.Balance!, null);
             }
             catch (VenmoException ex)
             {
-                await Respond(ex.Message, responseUrl);
+                respondAction.Invoke(ex.Message, null);
             }
         }
 
@@ -958,6 +1061,38 @@ namespace VenmoForSlack.Controllers
                 "this format\nvenmo code CODE", responseUrl);
         }
 
+        private void RequestAuth(Action<string, List<IBlock>?> respondAction)
+        {
+            string authUrl = VenmoApi.GetAuthorizeUrl();
+            respondAction.Invoke($"Authenticate to Venmo with the following URL: {authUrl} then send back the auth code in " +
+                "this format\nvenmo code CODE", null);
+        }
+
+        private async Task PublishHomeTabView(string userId, SlackCore slackApi)
+        {
+            List<IBlock> blocks = new List<IBlock>();
+            OptionObject initialAudienceOption = new OptionObject("Private", "private");
+            List<OptionObject> audienceOptions = new List<OptionObject>()
+                {
+                    initialAudienceOption,
+                    new OptionObject("Friends", "friends"),
+                    new OptionObject("Public", "public")
+                };
+            blocks.Add(new Input("Audience", new RadioButton("audienceRadio", audienceOptions, initialAudienceOption, null)));
+            OptionObject initialTypeOption = new OptionObject("Charge", "charge");
+            List<OptionObject> typeOptions = new List<OptionObject>()
+                {
+                    initialTypeOption,
+                    new OptionObject("Pay", "pay")
+                };
+            blocks.Add(new Input("Type", new RadioButton("typeRadio", typeOptions, initialTypeOption, null)));
+            blocks.Add(new Input("Amount", new PlainTextInput("amountInput", "Enter an amount or an arithmetic statement", null, false, null, null, null)));
+            blocks.Add(new Input("Note", new PlainTextInput("noteInput", "Enter a note", null, false, null, null, null)));
+            blocks.Add(new Input("Recipients", new PlainTextInput("recipientsInput", "Enter your recipients, separated by spaces", null, false, null, null, null)));
+            blocks.Add(new Actions(new Button("Submit", "submitButton", null, null, "primary", null)));
+            await slackApi.ViewsPublish(userId, new SlackViewObject(blocks));
+        }
+
         private async Task Respond(string text, string responseUrl)
         {
             await Respond(text, null, responseUrl);
@@ -965,8 +1100,17 @@ namespace VenmoForSlack.Controllers
 
         private async Task Respond(string text, List<IBlock>? blocks, string responseUrl)
         {
-            SlackMessage message = new SlackMessage(text, blocks);
+            var message = new golf1052.SlackAPI.Objects.Requests.SlackMessage(text, blocks);
             await httpClient.PostAsync(responseUrl, new StringContent(JsonConvert.SerializeObject(message, blockKitSerializer), Encoding.UTF8, "application/json"));
+        }
+
+        private Action<string, List<IBlock>?> CreateRespondAction(string responseUrl)
+        {
+            Action<string, List<IBlock>?> action = (text, blocks) =>
+            {
+                _ = Respond(text, blocks, responseUrl);
+            };
+            return action;
         }
     }
 }
