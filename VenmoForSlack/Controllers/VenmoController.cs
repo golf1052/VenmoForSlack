@@ -1118,9 +1118,10 @@ namespace VenmoForSlack.Controllers
 
         private async Task GetVenmoPending(string which, string venmoId, Action<string, List<IBlock>?> respondAction)
         {
-            List<string> strings = new List<string>();
             try
             {
+                List<string> strings = new List<string>();
+                List<IBlock> blocks = new List<IBlock>();
                 List<VenmoPaymentPending> pendingPayments = await venmoApi.GetAllPayments();
                 foreach (var payment in pendingPayments)
                 {
@@ -1128,14 +1129,23 @@ namespace VenmoForSlack.Controllers
                     {
                         if (payment.Actor.Id != venmoId)
                         {
-                            strings.Add($"{payment.Actor.DisplayName} requests ${payment.Amount:F2} for {payment.Note} | ID: {payment.Id}");
+                            string acceptCommand = $"venmo complete accept {payment.Id}";
+                            string str = $"{payment.Actor.DisplayName} requests ${payment.Amount:F2} for {payment.Note} | ID: {payment.Id}\n/{acceptCommand}";
+                            strings.Add(str);
+                            blocks.Add(new Section(TextObject.CreatePlainTextObject(str), null, null, helperMethods.GetVenmoUserProfileImage(payment.Actor)));
+                            blocks.Add(new Actions(
+                                new Button("Accept", "acceptButton", null, acceptCommand, null, null),
+                                new Button("Reject", "rejectButton", null, $"venmo complete reject {payment.Id}", null, null)));
                         }
                     }
                     else if (which == "outgoing")
                     {
                         if (payment.Actor.Id == venmoId && payment.Target.Type == "user")
                         {
-                            strings.Add($"{payment.Target.User.DisplayName} owes you ${payment.Amount:F2} {payment.Note} | ID: {payment.Id}");
+                            string str = $"{payment.Target.User.DisplayName} ({payment.Target.User.Username}) owes you ${payment.Amount:F2} {payment.Note} | ID: {payment.Id}";
+                            strings.Add(str);
+                            blocks.Add(new Section(TextObject.CreatePlainTextObject(str), null, null, helperMethods.GetVenmoUserProfileImage(payment.Target.User)));
+                            blocks.Add(new Actions(new Button("Cancel", "cancelButton", null, $"venmo complete cancel {payment.Id}", null, null)));
                         }
                     }
                 }
@@ -1146,7 +1156,7 @@ namespace VenmoForSlack.Controllers
                 }
                 else
                 {
-                    respondAction.Invoke(string.Join('\n', strings), null);
+                    respondAction.Invoke(string.Join('\n', strings), blocks);
                 }
             }
             catch (VenmoException ex)
