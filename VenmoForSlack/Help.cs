@@ -35,8 +35,8 @@ venmo alias delete alias
     example: venmo alias delete sam
     delete an alias
     alias = the alias for that user, must not contain spaces
-venmo pending (to OR from)
-    returns pending venmo charges, defaults to to
+venmo pending (incoming OR outgoing)
+    returns pending venmo charges, defaults to incoming
     also returns ID for payment completion
 venmo complete accept/reject/cancel number(s)/all
     accept OR reject pending incoming Venmos with the given IDs

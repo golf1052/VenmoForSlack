@@ -435,23 +435,23 @@ namespace VenmoForSlack.Controllers
                 {
                     if (splitMessage.Length == 2)
                     {
-                        await GetVenmoPending("to", await GetVenmoUserId(), respondAction);
+                        await GetVenmoPending("incoming", await GetVenmoUserId(), respondAction);
                     }
                     else if (splitMessage.Length == 3)
                     {
                         string which = splitMessage[2].ToLower();
-                        if (which == "to" || which == "from")
+                        if (which == "incoming" || which == "outgoing")
                         {
                             await GetVenmoPending(which, await GetVenmoUserId(), respondAction);
                         }
                         else
                         {
-                            respondAction.Invoke("Valid pending commands\npending\npending to\npending from", null);
+                            respondAction.Invoke("Valid pending commands\npending\npending incoming\npending outgoing", null);
                         }
                     }
                     else
                     {
-                        respondAction.Invoke("Valid pending commands\npending\npending to\npending from", null);
+                        respondAction.Invoke("Valid pending commands\npending\npending incoming\npending outgoing", null);
                     }
                 }
                 else if (splitMessage[1].ToLower() == "search")
@@ -1124,14 +1124,14 @@ namespace VenmoForSlack.Controllers
                 List<VenmoPaymentPending> pendingPayments = await venmoApi.GetAllPayments();
                 foreach (var payment in pendingPayments)
                 {
-                    if (which == "to")
+                    if (which == "incoming")
                     {
                         if (payment.Actor.Id != venmoId)
                         {
                             strings.Add($"{payment.Actor.DisplayName} requests ${payment.Amount:F2} for {payment.Note} | ID: {payment.Id}");
                         }
                     }
-                    else if (which == "from")
+                    else if (which == "outgoing")
                     {
                         if (payment.Actor.Id == venmoId && payment.Target.Type == "user")
                         {
