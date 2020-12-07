@@ -64,8 +64,15 @@ venmo schedule list
     list all scheduled Venmos
 venmo schedule delete ###
     delete the specified scheduled Venmo
+venmo delete
+    Deletes your Venmo authentication information from the database but retains your settings (aliases, schedules).
+venmo delete everything
+    Deletes all of your information including your Venmo authentication information and settings (aliases, schedules) from the database.
+    This is not reversible.
 venmo code code
     code = Venmo authentication code
+venmo create
+    Updates the Venmo Home tab
 venmo help
     this help message";
     }

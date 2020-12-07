@@ -92,10 +92,23 @@
     <div class="indent">
         <p>delete the specified scheduled Venmo</p>
     </div>
+    <h4>/venmo delete</h4>
+    <div class="indent">
+        <p>Deletes your Venmo authentication information from the database but retains your settings (aliases, schedules).</p>
+    </div>
+    <h4>/venmo delete everything</h4>
+    <div class="indent">
+        <p>Deletes all of your information including your Venmo authentication information and settings (aliases, schedules) from the database.</p>
+        <p><b>This is not reversible.</b></p>
+    </div>
     <h4>/venmo code {code:required}</h4>
     <div class="indent">
         <p>Authenticate to Venmo with the specified code. You must authenticate before you can start using other commands.</p>
         <p>code: Venmo authentication code</p>
+    </div>
+    <h4>/venmo create</h4>
+    <div class="indent">
+        <p>Updates the Venmo Home tab</p>
     </div>
     <h4>/venmo help</h4>
     <div class="indent">
