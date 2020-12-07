@@ -518,7 +518,34 @@ namespace VenmoForSlack
             return (responses, unprocessedRecipients);
         }
 
-        private void AddUsernameToCache(string username,
+        public async Task<(List<Venmo.Models.VenmoUser> foundUsers, List<string> unprocessedRecipients)> ProcessUnknownRecipients(List<string> recipients, VenmoApi venmoApi,
+            Database.Models.VenmoUser venmoUser, MongoDatabase database)
+        {
+            List<Venmo.Models.VenmoUser> foundUsers = new List<Venmo.Models.VenmoUser>();
+            List<string> unprocessedRecipients = new List<string>();
+            foreach (var recipient in recipients)
+            {
+                VenmoUserSearchResponse response = await venmoApi.SearchUsers(recipient);
+                bool foundUser = false;
+                foreach (var user in response.Data)
+                {
+                    if (recipient.ToLower() == user.Username.ToLower())
+                    {
+                        foundUser = true;
+                        foundUsers.Add(user);
+                        break;
+                    }
+                }
+
+                if (!foundUser)
+                {
+                    unprocessedRecipients.Add(recipient);
+                }
+            }
+            return (foundUsers, unprocessedRecipients);
+        }
+
+        public void AddUsernameToCache(string username,
             string id,
             Database.Models.VenmoUser venmoUser,
             MongoDatabase database)

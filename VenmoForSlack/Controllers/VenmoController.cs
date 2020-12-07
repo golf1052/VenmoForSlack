@@ -181,6 +181,19 @@ namespace VenmoForSlack.Controllers
                             _ = GetAccessTokenAndParseMessage(venmoString, payloadObject.User.Id, respondAction, database, slackApi);
                         }
                     }
+                    else if (button.ActionId == "confirmYesButton")
+                    {
+                        string[] confirmationActions = button.Value.Split('\n');
+                        var respondAction = CreateRespondAction(payloadObject.ResponseUrl);
+                        foreach (var action in confirmationActions)
+                        {
+                            _ = GetAccessTokenAndParseMessage(action, payloadObject.User.Id, respondAction, database, slackApi);
+                        }
+                    }
+                    else if (button.ActionId == "confirmNoButton")
+                    {
+                        _ = Respond($"Did not Venmo {button.Value}", payloadObject.ResponseUrl);
+                    }
                     else
                     {
                         _ = GetAccessTokenAndParseMessage(button.Value, payloadObject.User.Id, CreateRespondAction(payloadObject.ResponseUrl), database, slackApi);
@@ -522,6 +535,13 @@ namespace VenmoForSlack.Controllers
                         respondAction.Invoke("Invalid alias command, your alias probably has a space in it.", null);
                     }
                 }
+                else if (splitMessage[1].ToLower() == "cache")
+                {
+                    if (splitMessage.Length == 4)
+                    {
+                        helperMethods.AddUsernameToCache(splitMessage[2], splitMessage[3], venmoUser, database);
+                    }
+                }
                 else if (splitMessage.Length <= 2)
                 {
                     respondAction.Invoke("Invalid payment string", null);
@@ -576,9 +596,22 @@ namespace VenmoForSlack.Controllers
                         }
                     }
 
-                    foreach (var u in response.unprocessedRecipients)
+                    var searchResponse = await helperMethods.ProcessUnknownRecipients(response.unprocessedRecipients, venmoApi, venmoUser, database);
+                    foreach (var foundUser in searchResponse.foundUsers)
                     {
-                        respondAction.Invoke($"You are not friends with {u}.", null);
+                        string confirmationText = $"You are not friends with {foundUser.DisplayName} ({foundUser.Username}). Are you sure you want to Venmo them?";
+                        List<IBlock> blocks = new List<IBlock>();
+                        blocks.Add(new Section(TextObject.CreatePlainTextObject(confirmationText), null, null, helperMethods.GetVenmoUserProfileImage(foundUser)));
+                        string confirmationActions = $"venmo cache {foundUser.Username} {foundUser.Id}\n" +
+                            $"venmo {VenmoAudienceHelperMethods.ToString(parsedVenmoPayment.Audience)} {VenmoActionHelperMethods.ToString(parsedVenmoPayment.Action)} {parsedVenmoPayment.Amount:F2} for {parsedVenmoPayment.Note} to user_id:{foundUser.Id}";
+                        blocks.Add(new Actions(new Button("Yes", "confirmYesButton", null, confirmationActions, null, null),
+                            new Button("No", "confirmNoButton", null, $"{foundUser.DisplayName} ({foundUser.Username})", null, null)));
+                        respondAction.Invoke(confirmationText, blocks);
+                    }
+
+                    foreach (var u in searchResponse.unprocessedRecipients)
+                    {
+                        respondAction.Invoke($"Could not find Venmo user with username {u}.", null);
                     }
                 }
                 else if (splitMessage[1].ToLower() == "schedule")
@@ -594,6 +627,45 @@ namespace VenmoForSlack.Controllers
                     ParseScheduleMessage(splitMessage, slackUser.TimeZone, venmoUser, database, respondAction);
                 }
             }
+        }
+
+        private async Task<List<string>> ProcessVenmoPayments(
+            VenmoApi venmoApi, Database.Models.VenmoUser venmoUser, MongoDatabase database,
+            ParsedVenmoPayment parsedVenmoPayment, Action<string, List<IBlock>?> respondAction)
+        {
+            var response = await helperMethods.VenmoPayment(venmoApi, venmoUser, database, parsedVenmoPayment.Amount,
+                        parsedVenmoPayment.Note, parsedVenmoPayment.Recipients, parsedVenmoPayment.Action,
+                        parsedVenmoPayment.Audience);
+
+            foreach (var r in response.responses)
+            {
+                if (!string.IsNullOrEmpty(r.Error))
+                {
+                    respondAction.Invoke($"Venmo error: {r.Error}", null);
+                    continue;
+                }
+
+                if (parsedVenmoPayment.Action == VenmoAction.Charge)
+                {
+                    string responseText = $"Successfully charged {r.Data!.Payment.Target.User.DisplayName} ({r.Data!.Payment.Target.User.Username}) ${r.Data.Payment.Amount} for {r.Data.Payment.Note}. Audience is {r.Data.Payment.Audience}";
+                    List<IBlock> blocks = new List<IBlock>()
+                            {
+                                new Section(TextObject.CreatePlainTextObject(responseText), null, null,
+                                    helperMethods.GetVenmoUserProfileImage(r.Data!.Payment.Target.User)),
+                                new Actions(new Button("Cancel", "cancelButton", null, $"venmo complete cancel {r.Data.Payment.Id}", null, null))
+                            };
+                    respondAction.Invoke(responseText, blocks);
+                }
+                else if (parsedVenmoPayment.Action == VenmoAction.Pay)
+                {
+                    respondAction.Invoke($"Successfully paid {r.Data!.Payment.Target.User.DisplayName} ({r.Data!.Payment.Target.User.Username}) ${r.Data.Payment.Amount} for {r.Data.Payment.Note}. Audience is {r.Data.Payment.Audience}", null);
+                }
+                else
+                {
+                    respondAction.Invoke($"Successfully ??? {r.Data!.Payment.Target.User.DisplayName} ({r.Data!.Payment.Target.User.Username}) ${r.Data.Payment.Amount} for {r.Data.Payment.Note}. Audience is {r.Data.Payment.Audience}", null);
+                }
+            }
+            return response.unprocessedRecipients;
         }
 
         private void ParseScheduleMessage(string[] splitMessage,
