@@ -112,7 +112,7 @@ namespace VenmoForSlack
                                             continue;
                                         }
 
-                                        if (parsedVenmoPayment.Amount < 0)
+                                        if (parsedVenmoPayment.Action == VenmoAction.Charge)
                                         {
                                             await WebhookController.SendSlackMessage(workspaceInfo,
                                                 $"Successfully charged {r.Data!.Payment.Target.User.Username} ${r.Data.Payment.Amount} for {r.Data.Payment.Note}. Audience is {r.Data.Payment.Audience}",
