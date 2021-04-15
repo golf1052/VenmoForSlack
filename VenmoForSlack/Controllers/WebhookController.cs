@@ -13,7 +13,6 @@ using Microsoft.Extensions.Logging;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using VenmoForSlack.Database;
-using VenmoForSlack.Database.Models;
 using VenmoForSlack.Models;
 using VenmoForSlack.Venmo.Models;
 

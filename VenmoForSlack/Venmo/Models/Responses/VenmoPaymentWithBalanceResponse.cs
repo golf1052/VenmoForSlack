@@ -1,6 +1,6 @@
 using Newtonsoft.Json;
 
-namespace VenmoForSlack.Venmo.Models
+namespace VenmoForSlack.Venmo.Models.Responses
 {
     public class VenmoPaymentWithBalanceResponse
     {

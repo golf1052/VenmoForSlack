@@ -2,9 +2,9 @@ using Newtonsoft.Json;
 
 namespace VenmoForSlack.Venmo.Models
 {
-    public class MeResponse
+    public class VenmoPaymentResponse
     {
         [JsonProperty("data")]
-        public MeResponseData Data { get; set; }
+        public VenmoPayment? Data { get; set; }
     }
 }

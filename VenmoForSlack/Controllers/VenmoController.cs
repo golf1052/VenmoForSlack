@@ -23,6 +23,7 @@ using VenmoForSlack.Database.Models;
 using VenmoForSlack.Models;
 using VenmoForSlack.Venmo;
 using VenmoForSlack.Venmo.Models;
+using VenmoForSlack.Venmo.Models.Responses;
 
 namespace VenmoForSlack.Controllers
 {
@@ -478,7 +479,7 @@ namespace VenmoForSlack.Controllers
                         List<IBlock> sections = new List<IBlock>();
                         Section userCountSection;
                         string userCountText;
-                        if (response.Data.Count >= 50)
+                        if (response.Data!.Count >= 50)
                         {
                             userCountText = "Found more than 50 users";
                         }
@@ -573,6 +574,10 @@ namespace VenmoForSlack.Controllers
                         helperMethods.AddUsernameToCache(splitMessage[2], splitMessage[3], venmoUser, database);
                     }
                 }
+                else if (splitMessage[1].ToLower() == "history")
+                {
+                    await GetVenmoHistory(respondAction);
+                }
                 else if (splitMessage.Length <= 2)
                 {
                     respondAction.Invoke("Invalid payment string", null);
@@ -608,7 +613,7 @@ namespace VenmoForSlack.Controllers
 
                         if (parsedVenmoPayment.Action == VenmoAction.Charge)
                         {
-                            string responseText = $"Successfully charged {r.Data!.Payment.Target.User.DisplayName} ({r.Data!.Payment.Target.User.Username}) ${r.Data.Payment.Amount} for {r.Data.Payment.Note}. Audience is {r.Data.Payment.Audience}";
+                            string responseText = $"Successfully charged {r.Data!.Payment.Target!.User.DisplayName} ({r.Data!.Payment.Target.User.Username}) ${r.Data.Payment.Amount} for {r.Data.Payment.Note}. Audience is {r.Data.Payment.Audience}";
                             List<IBlock> blocks = new List<IBlock>()
                             {
                                 new Section(TextObject.CreatePlainTextObject(responseText), null, null,
@@ -619,11 +624,11 @@ namespace VenmoForSlack.Controllers
                         }
                         else if (parsedVenmoPayment.Action == VenmoAction.Pay)
                         {
-                            respondAction.Invoke($"Successfully paid {r.Data!.Payment.Target.User.DisplayName} ({r.Data!.Payment.Target.User.Username}) ${r.Data.Payment.Amount} for {r.Data.Payment.Note}. Audience is {r.Data.Payment.Audience}", null);
+                            respondAction.Invoke($"Successfully paid {r.Data!.Payment.Target!.User.DisplayName} ({r.Data!.Payment.Target.User.Username}) ${r.Data.Payment.Amount} for {r.Data.Payment.Note}. Audience is {r.Data.Payment.Audience}", null);
                         }
                         else
                         {
-                            respondAction.Invoke($"Successfully ??? {r.Data!.Payment.Target.User.DisplayName} ({r.Data!.Payment.Target.User.Username}) ${r.Data.Payment.Amount} for {r.Data.Payment.Note}. Audience is {r.Data.Payment.Audience}", null);
+                            respondAction.Invoke($"Successfully ??? {r.Data!.Payment.Target!.User.DisplayName} ({r.Data!.Payment.Target.User.Username}) ${r.Data.Payment.Amount} for {r.Data.Payment.Note}. Audience is {r.Data.Payment.Audience}", null);
                         }
                     }
 
@@ -652,7 +657,7 @@ namespace VenmoForSlack.Controllers
                     if (slackUser == null)
                     {
                         logger.LogError($"While trying to get slack user timezone they disappeared? {venmoUser.UserId}");
-                        respondAction.Invoke("While trying to get your timzone you disappeared?", null);
+                        respondAction.Invoke("While trying to get your timezone you disappeared?", null);
                         return;
                     }
                     ParseScheduleMessage(splitMessage, slackUser.TimeZone, venmoUser, database, respondAction);
@@ -660,12 +665,57 @@ namespace VenmoForSlack.Controllers
             }
         }
 
+        private async Task GetVenmoHistory(Action<string, List<IBlock>?> respondAction)
+        {
+            VenmoTransactionResponse response = await venmoApi.GetTransactions();
+            string historyMessage = string.Empty;
+
+            if (response.Data == null)
+            {
+                respondAction.Invoke("No transaction history.", null);
+                return;
+            }
+
+            foreach (VenmoTransaction transaction in response.Data)
+            {
+                if (transaction.Type == "payment")
+                {
+                    string paymentMessage = string.Empty;
+                    if (transaction.Payment!.Target!.User.Id == venmoApi.UserId)
+                    {
+                        // User paid someone else
+                        paymentMessage += $"You paid {transaction.Payment.Actor!.DisplayName} ({transaction.Payment.Actor.Username}) ";
+                    }
+                    else if (transaction.Payment.Actor!.Id == venmoApi.UserId)
+                    {
+                        // Someone else paid user
+                        paymentMessage += $"{transaction.Payment.Target.User.DisplayName} ({transaction.Payment.Target.User.Username}) paid you ";
+                    }
+
+                    // Add Z to DateCreated to show that it's UTC
+                    paymentMessage += $"${transaction.Payment.Amount:F2} for {transaction.Payment.Note} on {transaction.DateCreated}Z";
+
+                    historyMessage += $"{paymentMessage}\n";
+                }
+                else if (transaction.Type == "transfer")
+                {
+                    historyMessage += $"Transferred ${transaction.Transfer!.Amount} to {transaction.Transfer.Destination!.Name} (last four digits: {transaction.Transfer.Destination.LastFour}) on {transaction.DateCreated}Z\n";
+                }
+                else
+                {
+                    historyMessage += $"Unknown transaction type ({transaction.Type})! Ask Sanders to investigate.\n";
+                }
+            }
+
+            respondAction.Invoke(historyMessage, null);
+        }
+
         private async Task<string> GetVenmoUserId()
         {
             if (string.IsNullOrEmpty(venmoApi.UserId))
             {
                 MeResponse me = await venmoApi.GetMe();
-                string venmoId = me.Data.User.Id;
+                string venmoId = me.Data!.User.Id;
                 venmoApi.UserId = venmoId;
             }
             return venmoApi.UserId;
@@ -689,7 +739,7 @@ namespace VenmoForSlack.Controllers
 
                 if (parsedVenmoPayment.Action == VenmoAction.Charge)
                 {
-                    string responseText = $"Successfully charged {r.Data!.Payment.Target.User.DisplayName} ({r.Data!.Payment.Target.User.Username}) ${r.Data.Payment.Amount} for {r.Data.Payment.Note}. Audience is {r.Data.Payment.Audience}";
+                    string responseText = $"Successfully charged {r.Data!.Payment.Target!.User.DisplayName} ({r.Data!.Payment.Target.User.Username}) ${r.Data.Payment.Amount} for {r.Data.Payment.Note}. Audience is {r.Data.Payment.Audience}";
                     List<IBlock> blocks = new List<IBlock>()
                             {
                                 new Section(TextObject.CreatePlainTextObject(responseText), null, null,
@@ -700,11 +750,11 @@ namespace VenmoForSlack.Controllers
                 }
                 else if (parsedVenmoPayment.Action == VenmoAction.Pay)
                 {
-                    respondAction.Invoke($"Successfully paid {r.Data!.Payment.Target.User.DisplayName} ({r.Data!.Payment.Target.User.Username}) ${r.Data.Payment.Amount} for {r.Data.Payment.Note}. Audience is {r.Data.Payment.Audience}", null);
+                    respondAction.Invoke($"Successfully paid {r.Data!.Payment.Target!.User.DisplayName} ({r.Data!.Payment.Target.User.Username}) ${r.Data.Payment.Amount} for {r.Data.Payment.Note}. Audience is {r.Data.Payment.Audience}", null);
                 }
                 else
                 {
-                    respondAction.Invoke($"Successfully ??? {r.Data!.Payment.Target.User.DisplayName} ({r.Data!.Payment.Target.User.Username}) ${r.Data.Payment.Amount} for {r.Data.Payment.Note}. Audience is {r.Data.Payment.Audience}", null);
+                    respondAction.Invoke($"Successfully ??? {r.Data!.Payment.Target!.User.DisplayName} ({r.Data!.Payment.Target.User.Username}) ${r.Data.Payment.Amount} for {r.Data.Payment.Note}. Audience is {r.Data.Payment.Audience}", null);
                 }
             }
             return response.unprocessedRecipients;
@@ -966,7 +1016,7 @@ namespace VenmoForSlack.Controllers
                     continue;
                 }
                 
-                if (checkResponse.Data.Actor.Id != venmoId)
+                if (checkResponse.Data!.Actor!.Id != venmoId)
                 {
                     if (action == "cancel")
                     {
@@ -1170,7 +1220,7 @@ namespace VenmoForSlack.Controllers
             try
             {
                 MeResponse response = await venmoApi.GetMe();
-                respondAction.Invoke(response.Data.Balance!, null);
+                respondAction.Invoke(response.Data!.Balance!, null);
             }
             catch (VenmoException ex)
             {

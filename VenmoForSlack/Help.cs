@@ -41,6 +41,8 @@ venmo pending (incoming OR outgoing)
 venmo complete accept/reject/cancel number(s)/all
     accept OR reject pending incoming Venmos with the given IDs
     cancel pending outgoing Venmos with the given IDs
+venmo history
+    returns up to the last 50 Venmo transactions (payments or transfers)
 venmo schedule {recurrence} {execution date} {payment command}
     example: venmo schedule every beginning of the month pay $10 for Netflix to testuser
         this would pay $10 every 1st of the month to testuser

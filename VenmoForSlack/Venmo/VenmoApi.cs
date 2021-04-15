@@ -7,6 +7,7 @@ using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using VenmoForSlack.Venmo.Models;
 using Microsoft.Extensions.Logging;
+using VenmoForSlack.Venmo.Models.Responses;
 
 namespace VenmoForSlack.Venmo
 {
@@ -88,7 +89,7 @@ namespace VenmoForSlack.Venmo
             {
                 // If UserId hasn't been loaded yet then retrieve it
                 MeResponse me = await GetMe();
-                UserId = me.Data.User.Id;
+                UserId = me.Data!.User.Id;
             }
             Url url = new Url(BaseUrl).AppendPathSegments("users", UserId, "friends")
                 .SetQueryParams(new {
@@ -256,6 +257,26 @@ namespace VenmoForSlack.Venmo
                 .SetQueryParam("access_token", AccessToken);
             HttpResponseMessage responseMessage = await Get(url);
             VenmoUserSearchResponse response = GetObject<VenmoUserSearchResponse>(await responseMessage.Content.ReadAsStringAsync());
+            return response;
+        }
+
+        public async Task<VenmoTransactionResponse> GetTransactions()
+        {
+            if (string.IsNullOrEmpty(UserId))
+            {
+                // If UserId hasn't been loaded yet then retrieve it
+                MeResponse me = await GetMe();
+                UserId = me.Data!.User.Id;
+            }
+            int limit = 50;
+            Url url = new Url(BaseUrl).AppendPathSegments("stories", "target-or-actor", UserId)
+                .SetQueryParams(new
+                {
+                    limit = limit,
+                    access_token = AccessToken
+                });
+            HttpResponseMessage responseMessage = await Get(url);
+            VenmoTransactionResponse response = GetObject<VenmoTransactionResponse>(await responseMessage.Content.ReadAsStringAsync());
             return response;
         }
 

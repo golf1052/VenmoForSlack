@@ -11,7 +11,7 @@ using NodaTime.Text;
 using VenmoForSlack.Database;
 using VenmoForSlack.Database.Models;
 using VenmoForSlack.Venmo;
-using VenmoForSlack.Venmo.Models;
+using VenmoForSlack.Venmo.Models.Responses;
 
 namespace VenmoForSlack
 {
@@ -527,7 +527,7 @@ namespace VenmoForSlack
             {
                 VenmoUserSearchResponse response = await venmoApi.SearchUsers(recipient);
                 bool foundUser = false;
-                foreach (var user in response.Data)
+                foreach (var user in response.Data!)
                 {
                     if (recipient.ToLower() == user.Username.ToLower())
                     {

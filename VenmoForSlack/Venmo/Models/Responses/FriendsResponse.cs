@@ -1,7 +1,7 @@
 using System.Collections.Generic;
 using Newtonsoft.Json;
 
-namespace VenmoForSlack.Venmo.Models
+namespace VenmoForSlack.Venmo.Models.Responses
 {
     public class FriendsResponse
     {
@@ -9,6 +9,6 @@ namespace VenmoForSlack.Venmo.Models
         public PaginationObject? Pagination { get; set; }
         
         [JsonProperty("data")]
-        public List<VenmoUser> Data { get; set; }
+        public List<VenmoUser>? Data { get; set; }
     }
 }
