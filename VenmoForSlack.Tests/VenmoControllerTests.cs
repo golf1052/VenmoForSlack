@@ -4,6 +4,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 using NodaTime;
 using NodaTime.Testing;
 using VenmoForSlack.Controllers;
+using VenmoForSlack.Database;
 using VenmoForSlack.Venmo;
 using Xunit;
 
@@ -27,7 +28,8 @@ namespace VenmoForSlack.Tests
                 httpClient,
                 venmoApi,
                 fakeClock,
-                helperMethods);    
+                helperMethods,
+                NullLogger<MongoDatabase>.Instance);    
         }
 
         [Fact]
