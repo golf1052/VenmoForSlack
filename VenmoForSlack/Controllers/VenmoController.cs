@@ -914,22 +914,36 @@ namespace VenmoForSlack.Controllers
         }
 
         private async Task AliasUser(Database.Models.VenmoUser venmoUser,
-            string friendUsername,
+            string username,
             string alias,
             Action<string, List<IBlock>?> respondAction,
             MongoDatabase database)
         {
             List<Venmo.Models.VenmoUser> friends = await venmoApi.GetAllFriends();
-            string? friendId = VenmoApi.FindFriend(friendUsername, friends);
+            string? friendId = VenmoApi.FindFriend(username, friends);
             if (friendId == null)
             {
-                respondAction.Invoke($"You are not friends with {friendUsername}", null);
+                var searchResponse = await helperMethods.ProcessUnknownRecipients(new List<string>() { username }, venmoApi,
+                venmoUser, database);
+                foreach (var foundUser in searchResponse.foundUsers)
+                {
+                    if (username.ToLower() == foundUser.Username.ToLower())
+                    {
+                        friendId = foundUser.Id;
+                        break;
+                    }
+                }
+            }
+
+            if (friendId == null)
+            {
+                respondAction.Invoke($"Could not find {username}", null);
                 return;
             }
 
             BsonDocument aliasDoc = new BsonDocument()
             {
-                { "username", friendUsername },
+                { "username", username },
                 { "id", friendId }
             };
             if (venmoUser.Alias == null)
@@ -938,7 +952,7 @@ namespace VenmoForSlack.Controllers
             }
             venmoUser.Alias.Add(new BsonElement(alias, aliasDoc));
             database.SaveUser(venmoUser);
-            respondAction.Invoke("Alias set!", null);
+            respondAction.Invoke($"Alias set! ({alias} points to {username})", null);
         }
 
         private void ListAliases(Database.Models.VenmoUser venmoUser,
