@@ -209,6 +209,20 @@ namespace VenmoForSlack.Controllers
         [HttpPost]
         public async Task<string> HandleRequest([FromForm] SlackRequest body)
         {
+            if (string.IsNullOrEmpty(body.TeamId))
+            {
+                logger.LogError("Team id is null. Cannot handle request." +
+                    $"Token: {body.Token}\n" +
+                    $"TeamId: {body.TeamId}\n" +
+                    $"TeamDomain: {body.TeamDomain}\n" +
+                    $"ChannelId: {body.ChannelId}\n" +
+                    $"ChannelName: {body.ChannelName}\n" +
+                    $"UserId: {body.UserId}\n" +
+                    $"Command: {body.Command}\n" +
+                    $"Text: {body.Text}\n" +
+                    $"ResponseUrl: {body.ResponseUrl}");
+                throw new Exception("Team id is null, unable to handle request.");
+            }
             string? verifyRequestResponse = VerifyRequest(body.TeamId!, body.Token!);
             if (!string.IsNullOrEmpty(verifyRequestResponse))
             {
