@@ -273,7 +273,6 @@ namespace VenmoForSlack.Controllers
         {
             // If the request is sent on mobile (at least the iOS app) body.Text will be of the form: "/venmo balance"
             // On desktop it's just "balance". The desktop form is documented and was the original way it worked.
-            // The mobile difference is undocumnted and annoying.
 
             // Also the desktop client will trim body.Text, mobile will send body.Text as is
             if (string.IsNullOrEmpty(text))
@@ -695,15 +694,31 @@ namespace VenmoForSlack.Controllers
                 if (transaction.Type == "payment")
                 {
                     string paymentMessage = string.Empty;
-                    if (transaction.Payment!.Target!.User.Id == venmoApi.UserId)
+                    if (transaction.Payment!.Action == "pay")
                     {
-                        // User paid someone else
-                        paymentMessage += $"You paid {transaction.Payment.Actor!.DisplayName} ({transaction.Payment.Actor.Username}) ";
+                        if (transaction.Payment.Target!.User.Id == venmoApi.UserId)
+                        {
+                            // Someone else paid user
+                            paymentMessage += $"{transaction.Payment.Actor!.DisplayName} ({transaction.Payment.Actor.Username}) paid you ";
+                        }
+                        else if (transaction.Payment.Actor!.Id == venmoApi.UserId)
+                        {
+                            // User paid someone else
+                            paymentMessage += $"You paid {transaction.Payment.Target.User.DisplayName} ({transaction.Payment.Target.User.Username}) ";
+                        }
                     }
-                    else if (transaction.Payment.Actor!.Id == venmoApi.UserId)
+                    else if (transaction.Payment.Action == "charge")
                     {
-                        // Someone else paid user
-                        paymentMessage += $"{transaction.Payment.Target.User.DisplayName} ({transaction.Payment.Target.User.Username}) paid you ";
+                        if (transaction.Payment.Target!.User.Id == venmoApi.UserId)
+                        {
+                            // Someone else charged user
+                            paymentMessage += $"{transaction.Payment.Actor!.DisplayName} ({transaction.Payment.Actor.Username}) charged you ";
+                        }
+                        else if (transaction.Payment.Actor!.Id == venmoApi.UserId)
+                        {
+                            // User charged someone else
+                            paymentMessage += $"You charged {transaction.Payment.Target.User.DisplayName} ({transaction.Payment.Target.User.Username}) ";
+                        }
                     }
 
                     // Add Z to DateCreated to show that it's UTC
