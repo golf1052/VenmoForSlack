@@ -450,6 +450,7 @@ namespace VenmoForSlack.Controllers
             }
             else if (splitMessage[1].ToLower() == "ynab")
             {
+                SaveLastMessage(message, venmoUser, database);
                 await ynabHandler.ParseMessage(splitMessage, userId, respondAction, database);
             }
             else
