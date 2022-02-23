@@ -1,6 +1,6 @@
 namespace VenmoForSlack
 {
-    public static class Help
+    public static class VenmoHelp
     {
         public const string HelpMessage =
 @"Venmo help
@@ -69,7 +69,7 @@ venmo schedule delete ###
 venmo delete
     Deletes your Venmo authentication information from the database but retains your settings (aliases, schedules).
 venmo delete everything
-    Deletes all of your information including your Venmo authentication information and settings (aliases, schedules) from the database.
+    Deletes all of your information including your Venmo authentication information and settings (aliases, schedules) and your YNAB authentication information and settings (mappings) from the database.
     This is not reversible.
 venmo code code
     code = Venmo authentication code

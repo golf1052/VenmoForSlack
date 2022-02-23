@@ -59,12 +59,12 @@ namespace VenmoForSlack
                         if (user.Schedule != null && user.Schedule.Count > 0)
                         {
                             VenmoApi venmoApi = new VenmoApi(venmoApiLogger);
-                            string? accessToken = await helperMethods.CheckIfAccessTokenIsExpired(user, venmoApi, database);
+                            string? accessToken = await helperMethods.CheckIfVenmoAccessTokenIsExpired(user, venmoApi, database);
                             if (string.IsNullOrEmpty(accessToken))
                             {
-                                logger.LogError($"Unable to refresh access token for {user.UserId}");
+                                logger.LogError($"Unable to refresh Venmo access token for {user.UserId}");
                                 await WebhookController.SendSlackMessage(workspaceInfo,
-                                    "Unable to process scheduled Venmos as your token has expired, Please refresh it.",
+                                    "Unable to process scheduled Venmos as your token has expired. Please refresh it.",
                                     user.UserId, httpClient);
                                 continue;
                             }
@@ -115,13 +115,13 @@ namespace VenmoForSlack
                                         if (parsedVenmoPayment.Action == VenmoAction.Charge)
                                         {
                                             await WebhookController.SendSlackMessage(workspaceInfo,
-                                                $"Successfully charged {r.Data!.Payment.Target.User.Username} ${r.Data.Payment.Amount} for {r.Data.Payment.Note}. Audience is {r.Data.Payment.Audience}",
+                                                $"Successfully charged {r.Data!.Payment.Target!.User.Username} ${r.Data.Payment.Amount} for {r.Data.Payment.Note}. Audience is {r.Data.Payment.Audience}",
                                                 user.UserId, httpClient);
                                         }
                                         else
                                         {
                                             await WebhookController.SendSlackMessage(workspaceInfo,
-                                                $"Successfully paid {r.Data!.Payment.Target.User.Username} ${r.Data.Payment.Amount} for {r.Data.Payment.Note}. Audience is {r.Data.Payment.Audience}",
+                                                $"Successfully paid {r.Data!.Payment.Target!.User.Username} ${r.Data.Payment.Amount} for {r.Data.Payment.Note}. Audience is {r.Data.Payment.Audience}",
                                                 user.UserId, httpClient);
                                         }
                                     }

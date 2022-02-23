@@ -4,6 +4,8 @@ using System.Linq;
 using System.Threading.Tasks;
 using golf1052.SlackAPI.BlockKit.BlockElements;
 using golf1052.SlackAPI.Objects;
+using golf1052.YNABAPI.Client;
+using golf1052.YNABAPI.Model;
 using Microsoft.Extensions.Logging;
 using MongoDB.Bson;
 using NodaTime;
@@ -345,7 +347,7 @@ namespace VenmoForSlack
             return new LocalTime(12, 0);
         }
 
-        public async Task<string?> CheckIfAccessTokenIsExpired(Database.Models.VenmoUser venmoUser,
+        public async Task<string?> CheckIfVenmoAccessTokenIsExpired(Database.Models.VenmoUser venmoUser,
             VenmoApi venmoApi,
             MongoDatabase database)
         {
@@ -363,7 +365,7 @@ namespace VenmoForSlack
                 }
                 catch (Exception ex)
                 {
-                    logger.LogError(ex, $"Exception while refreshing auth token for {venmoUser.UserId}");
+                    logger.LogError(ex, $"Exception while refreshing Venmo auth token for {venmoUser.UserId}");
                     venmoUser.Venmo = new VenmoAuthObject()
                     {
                         AccessToken = "",
@@ -744,6 +746,57 @@ namespace VenmoForSlack
                 }
             }
             return null;
+        }
+
+        public async Task<string?> CheckIfYNABAccessTokenIsExpired(VenmoUser venmoUser,
+            MongoDatabase database,
+            ApiClient ynabApi)
+        {
+            if (venmoUser.YNAB!.Auth == null || venmoUser.YNAB.Auth.AccessToken == null)
+            {
+                return null;
+            }
+            DateTime expiresDate = (DateTime)venmoUser.YNAB!.Auth!.ExpiresIn!;
+            if (expiresDate < DateTime.UtcNow)
+            {
+                YNABTokenResponse response;
+                try
+                {
+                    response = await ynabApi.RefreshAuth(venmoUser.YNAB.Auth.RefreshToken);
+                }
+                catch (Exception ex)
+                {
+                    logger.LogError(ex, $"Exception while refreshing YNAB auth token for {venmoUser.UserId}");
+                    venmoUser.YNAB.Auth = null;
+                    database.SaveUser(venmoUser);
+                    return null;
+                }
+
+                venmoUser.YNAB.Auth.AccessToken = response.AccessToken;
+                venmoUser.YNAB.Auth.ExpiresIn = DateTime.UtcNow + TimeSpan.FromSeconds(response.ExpiresIn);
+                venmoUser.YNAB.Auth.RefreshToken = response.RefreshToken;
+                database.SaveUser(venmoUser);
+            }
+            return venmoUser.YNAB.Auth.AccessToken;
+        }
+
+        public Configuration CreateConfiguration()
+        {
+            Configuration config = new Configuration();
+            config.ClientId = Secrets.YNABClientId;
+            config.ClientSecret = Secrets.YNABClientSecret;
+            config.RedirectUri = Secrets.YNABRedirectUrl;
+            return config;
+        }
+
+        public Configuration CreateConfiguration(string accessToken)
+        {
+            Configuration config = new Configuration();
+            config.ClientId = Secrets.YNABClientId;
+            config.ClientSecret = Secrets.YNABClientSecret;
+            config.RedirectUri = Secrets.YNABRedirectUrl;
+            config.AccessToken = accessToken;
+            return config;
         }
     }
 }

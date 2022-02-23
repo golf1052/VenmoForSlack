@@ -35,7 +35,7 @@ namespace VenmoForSlack.Venmo.Models
         public string? Note { get; set; }
 
         [JsonProperty("amount")]
-        public double Amount { get; set; }
+        public decimal Amount { get; set; }
 
         [JsonProperty("action")]
         public string? Action { get; set; }

@@ -2,16 +2,20 @@ using System;
 using System.Collections.Generic;
 using MongoDB.Bson;
 using MongoDB.Bson.Serialization.Attributes;
+using VenmoForSlack.Database.Models.YNAB;
 
 namespace VenmoForSlack.Database.Models
 {
     public class VenmoUser
     {
         [BsonId]
-        public string UserId { get; set; }
+        public string UserId { get; set; } = string.Empty;
 
         [BsonElement("venmo")]
         public VenmoAuthObject? Venmo { get; set; }
+
+        [BsonElement("ynab")]
+        public YNABUser? YNAB { get; set; }
 
         [BsonElement("lastModified")]
         public DateTime LastModified { get; set; }

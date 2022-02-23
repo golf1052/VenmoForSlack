@@ -11,6 +11,8 @@ using golf1052.SlackAPI.BlockKit.Blocks;
 using golf1052.SlackAPI.BlockKit.CompositionObjects;
 using golf1052.SlackAPI.Events;
 using golf1052.SlackAPI.Objects;
+using golf1052.YNABAPI.Client;
+using golf1052.YNABAPI.Model;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging;
 using MongoDB.Bson;
@@ -34,15 +36,19 @@ namespace VenmoForSlack.Controllers
         private readonly ILogger logger;
         private readonly HttpClient httpClient;
         private readonly VenmoApi venmoApi;
+        private readonly ILogger<YNABHandler> ynabHandlerLogger;
         private readonly IClock clock;
         private readonly HelperMethods helperMethods;
         private readonly ILogger<MongoDatabase> mongoDatabaseLogger;
         private readonly JsonSerializerSettings blockKitSerializer;
         private readonly JsonSerializer jsonSerializer;
+        private readonly SlackOAuthHandler<VenmoAuthResponse> venmoOAuthHandler;
+        private readonly YNABHandler ynabHandler;
 
         public VenmoController(ILogger<VenmoController> logger,
             HttpClient httpClient,
             VenmoApi venmoApi,
+            ILogger<YNABHandler> ynabHandlerLogger,
             IClock clock,
             HelperMethods helperMethods,
             ILogger<MongoDatabase> mongoDatabaseLogger)
@@ -50,11 +56,14 @@ namespace VenmoForSlack.Controllers
             this.logger = logger;
             this.httpClient = httpClient;
             this.venmoApi = venmoApi;
+            this.ynabHandlerLogger = ynabHandlerLogger;
             this.clock = clock;
             this.helperMethods = helperMethods;
             this.mongoDatabaseLogger = mongoDatabaseLogger;
             blockKitSerializer = new golf1052.SlackAPI.HelperMethods().GetBlockKitSerializer();
             jsonSerializer = JsonSerializer.CreateDefault(blockKitSerializer);
+            venmoOAuthHandler = new SlackOAuthHandler<VenmoAuthResponse>("Venmo", VenmoApi.GetAuthorizeUrl(), "venmo code <CODE>", venmoApi.CompleteAuth);
+            ynabHandler = new YNABHandler(ynabHandlerLogger, helperMethods);
         }
 
         [HttpGet]
@@ -244,7 +253,7 @@ namespace VenmoForSlack.Controllers
                 }
                 else
                 {
-                    return Help.HelpMessage;
+                    return VenmoHelp.HelpMessage;
                 }
             }
 
@@ -255,7 +264,7 @@ namespace VenmoForSlack.Controllers
                 {
                     if (splitMessage.Length == 1)
                     {
-                        return Help.HelpMessage;
+                        return VenmoHelp.HelpMessage;
                     }
                     else
                     {
@@ -273,6 +282,7 @@ namespace VenmoForSlack.Controllers
         {
             // If the request is sent on mobile (at least the iOS app) body.Text will be of the form: "/venmo balance"
             // On desktop it's just "balance". The desktop form is documented and was the original way it worked.
+            // The mobile difference is undocumented and annoying.
 
             // Also the desktop client will trim body.Text, mobile will send body.Text as is
             if (string.IsNullOrEmpty(text))
@@ -326,7 +336,7 @@ namespace VenmoForSlack.Controllers
             string? accessToken = await GetAccessToken(userId, database);
             if (string.IsNullOrEmpty(accessToken))
             {
-                logger.LogError($"Couldn't refresh access token for {userId}");
+                logger.LogError($"Couldn't refresh Venmo access token for {userId}");
                 RequestAuth(respondAction);
             }
             else
@@ -338,7 +348,7 @@ namespace VenmoForSlack.Controllers
 
         private async Task CompleteAuth(string code, string userId, Action<string, List<IBlock>?> respondAction, MongoDatabase database)
         {
-            VenmoAuthResponse response = await venmoApi.CompleteAuth(code);
+            VenmoAuthResponse response = await venmoOAuthHandler.CompleteAuth(code);
             // The user gets created before we hit this so it's always not null
             Database.Models.VenmoUser venmoUser = database.GetUser(userId)!;
             venmoUser.Venmo = new Database.Models.VenmoAuthObject()
@@ -376,7 +386,7 @@ namespace VenmoForSlack.Controllers
                 return null;
             }
 
-            return await helperMethods.CheckIfAccessTokenIsExpired(venmoUser, venmoApi, database);
+            return await helperMethods.CheckIfVenmoAccessTokenIsExpired(venmoUser, venmoApi, database);
         }
 
         private async Task ParseMessage(string message,
@@ -389,11 +399,11 @@ namespace VenmoForSlack.Controllers
             string[] splitMessage = message.Split(' ');
             if (splitMessage.Length == 1)
             {
-                respondAction.Invoke(Help.HelpMessage, null);
+                respondAction.Invoke(VenmoHelp.HelpMessage, null);
             }
             else if (splitMessage[1].ToLower() == "help")
             {
-                respondAction.Invoke(Help.HelpMessage, null);
+                respondAction.Invoke(VenmoHelp.HelpMessage, null);
             }
             else if (splitMessage[1].ToLower() == "last")
             {
@@ -437,6 +447,10 @@ namespace VenmoForSlack.Controllers
                         respondAction.Invoke("Deleted all of your information from the database.", null);
                     }
                 }
+            }
+            else if (splitMessage[1].ToLower() == "ynab")
+            {
+                await ynabHandler.ParseMessage(splitMessage, userId, respondAction, database);
             }
             else
             {
@@ -1273,16 +1287,12 @@ namespace VenmoForSlack.Controllers
 
         private async Task RequestAuth(string responseUrl)
         {
-            string authUrl = VenmoApi.GetAuthorizeUrl();
-            await Respond($"Authenticate to Venmo with the following URL: {authUrl} then send back the auth code in " +
-                "this format\nvenmo code CODE", responseUrl);
+            await Respond(venmoOAuthHandler.RequestAuthString, responseUrl);
         }
 
         private void RequestAuth(Action<string, List<IBlock>?> respondAction)
         {
-            string authUrl = VenmoApi.GetAuthorizeUrl();
-            respondAction.Invoke($"Authenticate to Venmo with the following URL: {authUrl} then send back the auth code in " +
-                "this format\nvenmo code CODE", null);
+            respondAction(venmoOAuthHandler.RequestAuthString, null);
         }
 
         private async Task PublishHomeTabView(string userId, SlackCore slackApi)

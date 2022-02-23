@@ -12,7 +12,7 @@ namespace VenmoForSlack.Venmo.Models
         public string? Status { get; set; }
 
         [JsonProperty("amount")]
-        public double Amount { get; set; }
+        public decimal Amount { get; set; }
 
         [JsonProperty("date_requested")]
         public string? DateRequested { get; set; }

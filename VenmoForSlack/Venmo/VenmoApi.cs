@@ -50,7 +50,7 @@ namespace VenmoForSlack.Venmo
 
         public async Task<VenmoAuthResponse> RefreshAuth(string refreshToken)
         {
-            logger.LogInformation("Attempting to refresh token");
+            logger.LogInformation("Attempting to refresh Venmo token");
             Url url = new Url(BaseUrl).AppendPathSegments("oauth", "access_token");
             Dictionary<string, string> data = new Dictionary<string, string>()
             {
@@ -260,7 +260,14 @@ namespace VenmoForSlack.Venmo
             return response;
         }
 
-        public async Task<VenmoTransactionResponse> GetTransactions()
+        /// <summary>
+        /// 
+        /// </summary>
+        /// <param name="beforeId"></param>
+        /// <param name="afterId"></param>
+        /// <remarks>Only beforeId or afterId can be set, not both</remarks>
+        /// <returns></returns>
+        public async Task<VenmoTransactionResponse> GetTransactions(string? beforeId = null, string? afterId = null)
         {
             if (string.IsNullOrEmpty(UserId))
             {
@@ -275,6 +282,15 @@ namespace VenmoForSlack.Venmo
                     limit = limit,
                     access_token = AccessToken
                 });
+
+            if (beforeId != null)
+            {
+                url.SetQueryParam("before_id", beforeId);
+            }
+            else if (afterId != null)
+            {
+                url.SetQueryParam("after_id", afterId);
+            }
             HttpResponseMessage responseMessage = await Get(url);
             VenmoTransactionResponse response = GetObject<VenmoTransactionResponse>(await responseMessage.Content.ReadAsStringAsync());
             return response;
