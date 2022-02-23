@@ -27,6 +27,7 @@ namespace VenmoForSlack.Tests
             venmoController = new VenmoController(NullLogger<VenmoController>.Instance,
                 httpClient,
                 venmoApi,
+                NullLogger<YNABHandler>.Instance,
                 fakeClock,
                 helperMethods,
                 NullLogger<MongoDatabase>.Instance);    
