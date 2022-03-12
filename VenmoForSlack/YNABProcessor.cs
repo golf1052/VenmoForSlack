@@ -19,6 +19,7 @@ namespace VenmoForSlack
 {
     public class YNABProcessor
     {
+        private const string Default = "default";
         private readonly ILogger<YNABProcessor> logger;
         private readonly ILogger<VenmoApi> venmoApiLogger;
         private readonly ILogger<MongoDatabase> mongoDatabaseLogger;
@@ -182,7 +183,7 @@ namespace VenmoForSlack
                             if (multipleTransfers)
                             {
                                 // we created a new transaction so POST it
-                                var createTransactionsResponse = await transactionsApi.CreateTransactionAsync("default",
+                                var createTransactionsResponse = await transactionsApi.CreateTransactionAsync(Default,
                                     new SaveTransactionsWrapper(newTransaction));
 
                                 // then "delete" the other transfers
@@ -206,7 +207,7 @@ namespace VenmoForSlack
                                     transactionsToDelete.Add(updateTransaction);
                                 }
 
-                                var updateTransactionsResponse = await transactionsApi.UpdateTransactionsAsync("default", new UpdateTransactionsWrapper(transactionsToDelete));
+                                var updateTransactionsResponse = await transactionsApi.UpdateTransactionsAsync(Default, new UpdateTransactionsWrapper(transactionsToDelete));
                                 await WebhookController.SendSlackMessage(workspaceInfo,
                                     $"Imported and created a new YNAB Venmo transaction totaling ${originalDepositAmount:F2} with " +
                                     $"{subTransactions.Count} Venmo subtransactions combining {transactionsToDelete.Count} " +
@@ -221,7 +222,7 @@ namespace VenmoForSlack
                                     ynabDeposit.Amount, ynabDeposit.PayeeId, ynabDeposit.PayeeName, ynabDeposit.CategoryId,
                                     ynabDeposit.Memo, golf1052.YNABAPI.HelperMethods.ClearedEnum.Uncleared, ynabDeposit.Approved,
                                     ynabDeposit.FlagColor, ynabDeposit.ImportId, subTransactions);
-                                var response = await transactionsApi.UpdateTransactionAsync("defaut", ynabDeposit.Id,
+                                var response = await transactionsApi.UpdateTransactionAsync(Default, ynabDeposit.Id,
                                     new SaveTransactionWrapper(newTransaction));
                                 await WebhookController.SendSlackMessage(workspaceInfo,
                                     $"Updated a YNAB Venmo transaction with {subTransactions.Count} Venmo subtransactions which occured" +
@@ -238,7 +239,7 @@ namespace VenmoForSlack
         private async Task<List<TransactionDetail>> GetVenmoDeposits(Database.Models.VenmoUser venmoUser, Configuration configuration)
         {
             TransactionsApi transactionsApi = new TransactionsApi(configuration);
-            TransactionsResponse transactions = await transactionsApi.GetTransactionsByAccountAsync("default", venmoUser.YNAB!.DefaultAccount);
+            TransactionsResponse transactions = await transactionsApi.GetTransactionsByAccountAsync(Default, venmoUser.YNAB!.DefaultAccount);
             var venmoDeposits = transactions.Transactions
                 .Where(t => t.PayeeName != null && t.PayeeName.ToLower().Contains("from venmo"))
                 .OrderByDescending(t => t.Date)
