@@ -137,10 +137,12 @@ namespace VenmoForSlack
                                     {
                                         if (previousTransaction.Type == "transfer" && multipleTransfers)
                                         {
+                                            long milliunitAmount = (long)(depositAmount * 1000m);
+                                            string importId = $"YNAB:{milliunitAmount}:{ynabDeposit.Date:yyyy-MM-dd}";
                                             newTransaction = new SaveTransaction(ynabDeposit.AccountId, ynabDeposit.Date,
-                                                amount: (long)(depositAmount * 1000), ynabDeposit.PayeeId, ynabDeposit.PayeeName,
+                                                amount: milliunitAmount, ynabDeposit.PayeeId, ynabDeposit.PayeeName,
                                                 ynabDeposit.CategoryId, memo: null, golf1052.YNABAPI.HelperMethods.ClearedEnum.Uncleared,
-                                                ynabDeposit.Approved, ynabDeposit.FlagColor, importId: null,
+                                                ynabDeposit.Approved, ynabDeposit.FlagColor, importId: importId,
                                                 subTransactions);
                                         }
 
@@ -219,8 +221,8 @@ namespace VenmoForSlack
                                     ynabDeposit.Amount, ynabDeposit.PayeeId, ynabDeposit.PayeeName, ynabDeposit.CategoryId,
                                     ynabDeposit.Memo, golf1052.YNABAPI.HelperMethods.ClearedEnum.Uncleared, ynabDeposit.Approved,
                                     ynabDeposit.FlagColor, ynabDeposit.ImportId, subTransactions);
-                                var response = await transactionsApi.CreateTransactionAsync("default",
-                                    new SaveTransactionsWrapper(newTransaction));
+                                var response = await transactionsApi.UpdateTransactionAsync("defaut", ynabDeposit.Id,
+                                    new SaveTransactionWrapper(newTransaction));
                                 await WebhookController.SendSlackMessage(workspaceInfo,
                                     $"Updated a YNAB Venmo transaction with {subTransactions.Count} Venmo subtransactions which occured" +
                                     $"on {newTransaction.Date:d}. Please go into YNAB and confirm the updated transaction.",
