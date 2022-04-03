@@ -51,7 +51,7 @@ namespace VenmoForSlack
                 foreach (var workspace in Settings.SettingsObject.Workspaces.Workspaces)
                 {
                     WorkspaceInfo workspaceInfo = workspace.Value.ToObject<WorkspaceInfo>()!;
-                    logger.LogInformation($"Processing workspace ${workspace.Key}");
+                    logger.LogDebug($"Processing workspace ${workspace.Key}");
                     MongoDatabase database = new MongoDatabase(workspace.Key, mongoDatabaseLogger);
                     SlackCore slackApi = new SlackCore(workspaceInfo.BotToken);
                     var slackUsers = await slackApi.UsersList();
@@ -85,7 +85,7 @@ namespace VenmoForSlack
                             }
                             venmoApi.AccessToken = venmoAccessToken;
 
-                            logger.LogInformation($"Processing slack user {user.UserId}");
+                            logger.LogDebug($"Processing slack user {user.UserId}");
 
                             List<TransactionDetail> venmoDeposits = await GetVenmoDeposits(user, config);
                             if (!ShouldProcessLatestVenmoDeposit(venmoDeposits))
@@ -258,7 +258,7 @@ namespace VenmoForSlack
         // 5 days before the fromDate
         private async Task<List<VenmoTransaction>> GetVenmoTransactionsBetweenDates(DateOnly fromDate, DateOnly toDate, VenmoApi venmoApi, Database.Models.VenmoUser venmoUser)
         {
-            logger.LogInformation($"Finding Venmo transactions between {fromDate} and {toDate}");
+            logger.LogDebug($"Finding Venmo transactions between {fromDate} and {toDate}");
             List<VenmoTransaction> transactions = new List<VenmoTransaction>();
             string? beforeId = null;
             bool foundAllTransactions = false;
@@ -277,7 +277,7 @@ namespace VenmoForSlack
                             if (transaction.Type == "transfer")
                             {
                                 DateTime transactionDate = DateTime.Parse(transaction.DateCreated);
-                                logger.LogInformation($"Found transfer on {transactionDate}. ID: {transaction.Id}");
+                                logger.LogDebug($"Found transfer on {transactionDate}. ID: {transaction.Id}");
 
                                 // if the transfer initiated from Venmo was before the toDate and after 5 days before
                                 // the toDate set the transaction as the toTransfer
@@ -285,7 +285,7 @@ namespace VenmoForSlack
                                     transactionDate < toDate.ToDateTime(TimeOnly.MinValue) &&
                                     transactionDate > toDate.AddDays(-5).ToDateTime(TimeOnly.MinValue))
                                 {
-                                    logger.LogInformation($"Set transfer {transaction.Id} as toTransfer");
+                                    logger.LogDebug($"Set transfer {transaction.Id} as toTransfer");
                                     toTransfer = transaction;
                                     transactions.Add(transaction);
                                 }
@@ -293,7 +293,7 @@ namespace VenmoForSlack
                                 // need to handle transfers done one after another (due to Venmo transfer limit)
                                 if (toTransfer != null && previousTransaction != null && previousTransaction.Type == "transfer")
                                 {
-                                    logger.LogInformation($"Found transfers one after another\n" +
+                                    logger.LogDebug($"Found transfers one after another\n" +
                                         $"Transfer 1: {previousTransaction.Id} at {previousTransaction.DateCreated}\n" +
                                         $"Transfer 2: {transaction.Id} at {transaction.DateCreated}");
                                     transactions.Add(transaction);
@@ -303,7 +303,7 @@ namespace VenmoForSlack
                                     transactionDate < fromDate.ToDateTime(TimeOnly.MinValue) &&
                                     transactionDate > fromDate.AddDays(-5).ToDateTime(TimeOnly.MinValue))
                                 {
-                                    logger.LogInformation($"Set transfer {transaction.Id} as fromTransfer");
+                                    logger.LogDebug($"Set transfer {transaction.Id} as fromTransfer");
                                     fromTransfer = transaction;
                                     transactions.Add(transaction);
                                     foundAllTransactions = true;

@@ -1,12 +1,14 @@
 using System;
 using System.Collections.Generic;
-using System.Threading.Tasks;
 using System.Net.Http;
+using System.Threading.Tasks;
 using Flurl;
+using Microsoft.Extensions.Logging;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
+using Polly;
+using Polly.Contrib.WaitAndRetry;
 using VenmoForSlack.Venmo.Models;
-using Microsoft.Extensions.Logging;
 using VenmoForSlack.Venmo.Models.Responses;
 
 namespace VenmoForSlack.Venmo
@@ -318,7 +320,10 @@ namespace VenmoForSlack.Venmo
 
         private async Task<HttpResponseMessage> Post(Url url, HttpContent httpContent)
         {
-            HttpResponseMessage responseMessage = await httpClient.PostAsync(url, httpContent);
+            HttpResponseMessage responseMessage = await Polly.Policy
+                .HandleResult<HttpResponseMessage>(response => response.StatusCode == System.Net.HttpStatusCode.InternalServerError)
+                .WaitAndRetryAsync(Backoff.DecorrelatedJitterBackoffV2(TimeSpan.FromSeconds(5), 30))
+                .ExecuteAsync(async () => await httpClient.PostAsync(url, httpContent));
             logger.LogInformation(await responseMessage.Content.ReadAsStringAsync());
             return responseMessage;
         }
