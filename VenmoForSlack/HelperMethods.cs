@@ -351,9 +351,11 @@ namespace VenmoForSlack
             VenmoApi venmoApi,
             MongoDatabase database)
         {
-            if (venmoUser.Venmo!.ExpiresIn == null || venmoUser.Venmo!.ExpiresIn.GetType() == typeof(string))
+            // With the new auth method Venmo access tokens never expire and ExpiresIn (and RefreshToken) will be null.
+            // However since some users still have old, refreshable tokens we'll continue to check if they've expired.
+            if (venmoUser.Venmo!.ExpiresIn == null || (venmoUser.Venmo!.ExpiresIn.GetType() == typeof(string) && venmoUser.Venmo!.ExpiresIn.ToString() == string.Empty))
             {
-                return null;
+                return venmoUser.Venmo.AccessToken;
             }
             DateTime expiresDate = (DateTime)venmoUser.Venmo!.ExpiresIn;
             if (expiresDate < DateTime.UtcNow)

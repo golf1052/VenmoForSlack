@@ -11,8 +11,6 @@ using golf1052.SlackAPI.BlockKit.Blocks;
 using golf1052.SlackAPI.BlockKit.CompositionObjects;
 using golf1052.SlackAPI.Events;
 using golf1052.SlackAPI.Objects;
-using golf1052.YNABAPI.Client;
-using golf1052.YNABAPI.Model;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging;
 using MongoDB.Bson;
@@ -42,7 +40,6 @@ namespace VenmoForSlack.Controllers
         private readonly ILogger<MongoDatabase> mongoDatabaseLogger;
         private readonly JsonSerializerSettings blockKitSerializer;
         private readonly JsonSerializer jsonSerializer;
-        private readonly SlackOAuthHandler<VenmoAuthResponse> venmoOAuthHandler;
         private readonly YNABHandler ynabHandler;
 
         public VenmoController(ILogger<VenmoController> logger,
@@ -62,7 +59,6 @@ namespace VenmoForSlack.Controllers
             this.mongoDatabaseLogger = mongoDatabaseLogger;
             blockKitSerializer = new golf1052.SlackAPI.HelperMethods().GetBlockKitSerializer();
             jsonSerializer = JsonSerializer.CreateDefault(blockKitSerializer);
-            venmoOAuthHandler = new SlackOAuthHandler<VenmoAuthResponse>("Venmo", VenmoApi.GetAuthorizeUrl(), "venmo code <CODE>", venmoApi.CompleteAuth);
             ynabHandler = new YNABHandler(ynabHandlerLogger, helperMethods);
         }
 
@@ -257,25 +253,14 @@ namespace VenmoForSlack.Controllers
                 }
             }
 
-            string[] splitMessage = requestText.Split(' ');
-            if (splitMessage.Length > 0)
+            string? unauthResponse = await ParseUnauthenticatedMessage(requestText, body.UserId!, CreateRespondAction(body.ResponseUrl!), database);
+            if (unauthResponse == string.Empty)
             {
-                if (splitMessage[0].ToLower() == "code")
-                {
-                    if (splitMessage.Length == 1)
-                    {
-                        return VenmoHelp.HelpMessage;
-                    }
-                    else
-                    {
-                        _ = CompleteAuth(splitMessage[1], body.UserId!, CreateRespondAction(body.ResponseUrl!), database);
-                        return "";
-                    }
-                }
+                return string.Empty;
             }
 
             _ = GetAccessTokenAndParseMessage($"venmo {requestText}", body.UserId!, CreateRespondAction(body.ResponseUrl!), database, slackApi);
-            return "";
+            return string.Empty;
         }
 
         private string ProcessRequestText(string? text)
@@ -346,22 +331,6 @@ namespace VenmoForSlack.Controllers
             }
         }
 
-        private async Task CompleteAuth(string code, string userId, Action<string, List<IBlock>?> respondAction, MongoDatabase database)
-        {
-            VenmoAuthResponse response = await venmoOAuthHandler.CompleteAuth(code);
-            // The user gets created before we hit this so it's always not null
-            Database.Models.VenmoUser venmoUser = database.GetUser(userId)!;
-            venmoUser.Venmo = new Database.Models.VenmoAuthObject()
-            {
-                AccessToken = response.AccessToken,
-                ExpiresIn = DateTime.UtcNow + TimeSpan.FromSeconds(response.ExpiresIn),
-                RefreshToken = response.RefreshToken,
-                UserId = response.User!.Id
-            };
-            database.SaveUser(venmoUser);
-            respondAction.Invoke("Authentication complete", null);
-        }
-
         private async Task<string?> GetAccessToken(string userId, MongoDatabase database)
         {
             Database.Models.VenmoUser? venmoUser = database.GetUser(userId);
@@ -380,7 +349,9 @@ namespace VenmoForSlack.Controllers
                     AccessToken = "",
                     ExpiresIn = "",
                     RefreshToken = "",
-                    UserId = ""
+                    UserId = "",
+                    DeviceId = "",
+                    OtpSecret = ""
                 };
                 database.SaveUser(venmoUser);
                 return null;
@@ -411,7 +382,7 @@ namespace VenmoForSlack.Controllers
             }
             else if (splitMessage[1].ToLower() == "code")
             {
-                await CompleteAuth(splitMessage[2], userId, respondAction, database);
+                respondAction("code is no longer supported. Please use /venmo auth instead", null);
             }
             else if (splitMessage[1].ToLower() == "create")
             {
@@ -691,6 +662,113 @@ namespace VenmoForSlack.Controllers
                     ParseScheduleMessage(splitMessage, slackUser.TimeZone, venmoUser, database, respondAction);
                 }
             }
+        }
+
+        private async Task<string?> ParseUnauthenticatedMessage(string message,
+            string userId,
+            Action<string, List<IBlock>?> respondAction,
+            MongoDatabase database)
+        {
+            string[] splitMessage = message.Split(' ');
+            if (splitMessage.Length > 0)
+            {
+                if (splitMessage[0].ToLower() == "auth")
+                {
+                    Database.Models.VenmoUser? venmoUser = database.GetUser(userId);
+                    if (venmoUser == null)
+                    {
+                        venmoUser = new Database.Models.VenmoUser()
+                        {
+                            UserId = userId,
+                            Venmo = new VenmoAuthObject()
+                            {
+                                DeviceId = Guid.NewGuid().ToString()
+                            }
+                        };
+                        database.SaveUser(venmoUser);
+                    }
+                    else
+                    {
+                        if (venmoUser.Venmo == null)
+                        {
+                            venmoUser.Venmo = new VenmoAuthObject()
+                            {
+                                DeviceId = Guid.NewGuid().ToString()
+                            };
+                            database.SaveUser(venmoUser);
+                        }
+                        else
+                        {
+                            if (string.IsNullOrEmpty(venmoUser.Venmo.DeviceId))
+                            {
+                                venmoUser.Venmo.DeviceId = Guid.NewGuid().ToString();
+                                database.SaveUser(venmoUser);
+                            }
+                        }
+                    }
+
+                    string username = splitMessage[1];
+                    string password = string.Join(' ', splitMessage[2..]);
+                    VenmoAuthResponse? response = null;
+                    try
+                    {
+                        response = await venmoApi.AuthorizeWithUsernameAndPassword(username, password, venmoUser.Venmo!.DeviceId!);
+                    }
+                    catch (VenmoException ex)
+                    {
+                        if (!string.IsNullOrEmpty(ex.VenmoOtpSecret))
+                        {
+                            respondAction("2FA required. Please enter the 2FA code sent to your phone in this format `/venmo otp <CODE>`", null);
+                        }
+                        else
+                        {
+                            respondAction("Venmo OTP secret not found.", null);
+                        }
+                        return string.Empty;
+                    }
+
+                    if (response != null)
+                    {
+                        venmoUser.Venmo.AccessToken = response.AccessToken;
+                        venmoUser.Venmo.UserId = response.User!.Id;
+                        venmoUser.Venmo.OtpSecret = null;
+                        database.SaveUser(venmoUser);
+                        respondAction("Authenication complete", null);
+                    }
+                }
+                else if (splitMessage[0].ToLower() == "otp")
+                {
+                    Database.Models.VenmoUser? venmoUser = database.GetUser(userId);
+                    if (venmoUser == null)
+                    {
+                        respondAction("Maybe you forgot to try and authenticate first? `/venmo auth _username_ _password_`", null);
+                        return string.Empty;
+                    }
+                    string otp = splitMessage[1];
+                    VenmoAuthResponse response;
+                    try
+                    {
+                        response = await venmoApi.AuthorizeWith2FA(otp, venmoUser.Venmo!.OtpSecret!, venmoUser.Venmo!.DeviceId!);
+                    }
+                    catch (VenmoException ex)
+                    {
+                        throw ex;
+                    }
+
+                    venmoUser.Venmo.AccessToken = response.AccessToken;
+                    venmoUser.Venmo.UserId = response.User!.Id;
+                    venmoUser.Venmo.OtpSecret = null;
+                    database.SaveUser(venmoUser);
+                    respondAction("Authentication complete", null);
+                    return string.Empty;
+                }
+                else if (splitMessage[0].ToLower() == "code")
+                {
+                    respondAction("code is no longer supported. Please use /venmo auth instead", null);
+                    return string.Empty;
+                }
+            }
+            return null;
         }
 
         private async Task GetVenmoHistory(Action<string, List<IBlock>?> respondAction)
@@ -1288,12 +1366,14 @@ namespace VenmoForSlack.Controllers
 
         private async Task RequestAuth(string responseUrl)
         {
-            await Respond(venmoOAuthHandler.RequestAuthString, responseUrl);
+            await Respond("Authenticate to Venmo using the following command: `/venmo auth _username_ _password_` where _username_ " +
+                $"is the email, phone number, or username you use to login to Venmo and _password_ is your Venmo password.", responseUrl);
         }
 
         private void RequestAuth(Action<string, List<IBlock>?> respondAction)
         {
-            respondAction(venmoOAuthHandler.RequestAuthString, null);
+            respondAction("Authenticate to Venmo using the following command: `/venmo auth _username_ _password_` where _username_ " +
+                $"is the email, phone number, or username you use to login to Venmo and _password_ is your Venmo password.", null);
         }
 
         private async Task PublishHomeTabView(string userId, SlackCore slackApi)

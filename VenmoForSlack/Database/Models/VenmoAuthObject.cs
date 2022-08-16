@@ -16,5 +16,11 @@ namespace VenmoForSlack.Database.Models
 
         [BsonElement("refresh_token")]
         public string? RefreshToken { get; set; }
+
+        [BsonElement("device_id")]
+        public string? DeviceId { get; set; }
+
+        [BsonElement("otp_secret")]
+        public string? OtpSecret { get; set; }
     }
 }
