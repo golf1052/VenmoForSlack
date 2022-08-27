@@ -709,7 +709,7 @@ namespace VenmoForSlack.Controllers
 
                     string username = splitMessage[1];
                     string password = string.Join(' ', splitMessage[2..]);
-                    VenmoAuthResponse? response = null;
+                    VenmoAuthResponse? response;
                     try
                     {
                         response = await venmoApi.AuthorizeWithUsernameAndPassword(username, password, venmoUser.Venmo!.DeviceId!);
@@ -718,6 +718,8 @@ namespace VenmoForSlack.Controllers
                     {
                         if (!string.IsNullOrEmpty(ex.VenmoOtpSecret))
                         {
+                            venmoUser.Venmo.OtpSecret = ex.VenmoOtpSecret;
+                            database.SaveUser(venmoUser);
                             respondAction("2FA required. Please enter the 2FA code sent to your phone in this format `/venmo otp <CODE>`", null);
                         }
                         else
