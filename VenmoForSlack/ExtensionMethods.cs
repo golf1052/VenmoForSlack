@@ -1,4 +1,5 @@
 using System;
+using MongoDB.Bson;
 using NodaTime;
 
 namespace VenmoForSlack
@@ -19,6 +20,26 @@ namespace VenmoForSlack
         public static string GetFriendlyZonedDateTimeString(this ZonedDateTime zonedDateTime)
         {
             return zonedDateTime.ToDateTimeOffset().ToString("f");
+        }
+
+        public static bool TryGetElementIgnoreCase(this BsonDocument bsonDocument, string name, out BsonElement value)
+        {
+            if (name == null)
+            {
+                throw new ArgumentNullException(nameof(name));
+            }
+
+            foreach (var element in bsonDocument.Elements)
+            {
+                if (element.Name.Equals(name, StringComparison.OrdinalIgnoreCase))
+                {
+                    value = element;
+                    return true;
+                }
+            }
+
+            value = default(BsonElement);
+            return false;
         }
     }
 }

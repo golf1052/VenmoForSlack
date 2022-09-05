@@ -39,7 +39,7 @@ namespace VenmoForSlack.Database.Models
         {
             if (Alias != null)
             {
-                bool gotElement = Alias.TryGetElement(alias, out BsonElement element);
+                bool gotElement = Alias.TryGetElementIgnoreCase(alias, out BsonElement element);
                 if (gotElement)
                 {
                     BsonDocument doc = element.Value.AsBsonDocument;
@@ -70,7 +70,7 @@ namespace VenmoForSlack.Database.Models
         {
             if (Cache != null)
             {
-                bool gotElement = Cache.TryGetElement(username, out BsonElement element);
+                bool gotElement = Cache.TryGetElementIgnoreCase(username, out BsonElement element);
                 if (gotElement)
                 {
                     BsonDocument doc = element.Value.AsBsonDocument;

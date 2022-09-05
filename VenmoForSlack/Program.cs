@@ -18,7 +18,7 @@ namespace VenmoForSlack
 {
     public class Program
     {
-        public static MongoClient Mongo = new MongoClient(Secrets.MongoConnectionString);
+        public static readonly MongoClient Mongo = new MongoClient(Secrets.MongoConnectionString);
         
         public static void Main(string[] args)
         {
