@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Net;
 using System.Net.Http;
 using System.Text;
 using System.Threading.Tasks;
@@ -216,17 +217,11 @@ namespace VenmoForSlack.Controllers
         {
             if (string.IsNullOrEmpty(body.TeamId))
             {
-                logger.LogError("Team id is null. Cannot handle request." +
-                    $"Token: {body.Token}\n" +
-                    $"TeamId: {body.TeamId}\n" +
-                    $"TeamDomain: {body.TeamDomain}\n" +
-                    $"ChannelId: {body.ChannelId}\n" +
-                    $"ChannelName: {body.ChannelName}\n" +
-                    $"UserId: {body.UserId}\n" +
-                    $"Command: {body.Command}\n" +
-                    $"Text: {body.Text}\n" +
-                    $"ResponseUrl: {body.ResponseUrl}");
-                throw new Exception("Team id is null, unable to handle request.");
+                logger.LogWarning($"Unknown request.\n" +
+                    $"Remote IP: {Request.HttpContext.Connection.RemoteIpAddress}\n" +
+                    $"Remote Port: {Request.HttpContext.Connection.RemotePort}");
+                Response.StatusCode = (int)HttpStatusCode.BadRequest;
+                return string.Empty;
             }
             string? verifyRequestResponse = VerifyRequest(body.TeamId!, body.Token!);
             if (!string.IsNullOrEmpty(verifyRequestResponse))
