@@ -64,7 +64,7 @@ namespace VenmoForSlack
                 (double amount, string comparison)? parsedAmount = ParseAmount(7, splitMessage);
                 double? amount = null;
                 string? comparison = null;
-                string? note;
+                string? note = null;
                 if (parsedAmount == null)
                 {
                     note = ParseNote(7, splitMessage);
