@@ -242,7 +242,7 @@ namespace VenmoForSlack
                     }
                     else if (autopayment.Comparison == "<")
                     {
-                        if (autopayment.Amount >= request.Data.Amount)
+                        if (request.Data.Amount >= autopayment.Amount)
                         {
                             if (matchString == null)
                             {
@@ -257,7 +257,7 @@ namespace VenmoForSlack
                     }
                     else if (autopayment.Comparison == "<=")
                     {
-                        if (autopayment.Amount > request.Data.Amount)
+                        if (request.Data.Amount > autopayment.Amount)
                         {
                             if (matchString == null)
                             {
