@@ -12,10 +12,15 @@ namespace VenmoForSlack.Database
         private IMongoDatabase database;
         private IMongoCollection<VenmoUser> usersCollection;
 
-        public MongoDatabase(string workspaceId, ILogger<MongoDatabase> logger)
+        public MongoDatabase(string workspaceId, ILogger<MongoDatabase> logger) :
+            this(workspaceId, Program.Mongo, logger)
+        {
+        }
+
+        public MongoDatabase(string workspaceId, IMongoClient mongoClient, ILogger<MongoDatabase> logger)
         {
             this.logger = logger;
-            database = Program.Mongo.GetDatabase($"yhackslackpack_{workspaceId}");
+            database = mongoClient.GetDatabase($"yhackslackpack_{workspaceId}");
             try
             {
                 database.CreateCollection("users");

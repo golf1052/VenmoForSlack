@@ -14,6 +14,7 @@ using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using VenmoForSlack.Database;
 using VenmoForSlack.Models;
+using VenmoForSlack.Venmo;
 using VenmoForSlack.Venmo.Models;
 
 namespace VenmoForSlack.Controllers
@@ -30,15 +31,21 @@ namespace VenmoForSlack.Controllers
 
         private readonly ILogger logger;
         private readonly HttpClient httpClient;
+        private readonly HelperMethods helperMethods;
         private readonly ILogger<MongoDatabase> mongoDatabaseLogger;
+        private readonly ILogger<VenmoApi> venmoApiLogger;
 
         public WebhookController(ILogger<WebhookController> logger,
             HttpClient httpClient,
-            ILogger<MongoDatabase> mongoDatabaseLogger)
+            HelperMethods helperMethods,
+            ILogger<MongoDatabase> mongoDatabaseLogger,
+            ILogger<VenmoApi> venmoApiLogger)
         {
             this.logger = logger;
             this.httpClient = httpClient;
+            this.helperMethods = helperMethods;
             this.mongoDatabaseLogger = mongoDatabaseLogger;
+            this.venmoApiLogger = venmoApiLogger;
         }
 
         [HttpGet]
@@ -87,21 +94,61 @@ namespace VenmoForSlack.Controllers
                 
                 if (request.Data.Action == "charge")
                 {
-                    message += $" | ID: {request.Data.Id}";
-                    string acceptCommand = $"venmo complete accept {request.Data.Id}";
-                    List<IBlock> blocks = new List<IBlock>();
-                    blocks.Add(new Section(TextObject.CreatePlainTextObject($"{message}\n/{acceptCommand}"), null, null,
-                        new golf1052.SlackAPI.BlockKit.BlockElements.Image(request.Data.Actor.ProfilePictureUrl,
-                            $"Venmo profile picture of {request.Data.Actor.DisplayName}")));
-                    blocks.Add(new Actions(
-                        new Button("Accept", "acceptButton", null, acceptCommand, null, null),
-                        new Button("Reject", "rejectButton", null, $"venmo complete reject {request.Data.Id}", null, null)));
+                    VenmoApi? venmoApi = await GetVenmoApi(databaseInfo.Value.user,
+                        databaseInfo.Value.workspaceInfo,
+                        databaseInfo.Value.database);
+
+                    (bool autopaid, string? autopayMessage)? autopayResponse = null;
+                    if (venmoApi != null)
+                    {
+                        Autopay autopay = new Autopay(venmoApi, databaseInfo.Value.database);
+                        autopayResponse = await autopay.CheckForAutopayment(request, databaseInfo.Value.user);
+                    }
 
                     var channels = await slackApi.ConversationsList(false, "im");
                     var userChannel = channels.FirstOrDefault(c => c.User == databaseInfo.Value.user.UserId);
-                    if (userChannel != null)
+
+                    List<IBlock>? blocks = null;
+                    if (!autopayResponse.HasValue || !autopayResponse.Value.autopaid)
                     {
-                        await SendSlackMessage(databaseInfo.Value.workspaceInfo, $"{message}\n/{acceptCommand}", blocks, userChannel.Id, httpClient);
+                        if (autopayResponse.HasValue && !string.IsNullOrEmpty(autopayResponse.Value.autopayMessage))
+                        {
+                            if (userChannel != null)
+                            {
+                                await SendSlackMessage(databaseInfo.Value.workspaceInfo,
+                                    autopayResponse.Value.autopayMessage, userChannel.Id, httpClient);
+                            }
+                        }
+
+                        message += $" | ID: {request.Data.Id}";
+                        string acceptCommand = $"venmo complete accept {request.Data.Id}";
+                        blocks = new List<IBlock>();
+                        blocks.Add(new Section(TextObject.CreatePlainTextObject($"{message}\n/{acceptCommand}"), null, null,
+                            new golf1052.SlackAPI.BlockKit.BlockElements.Image(request.Data.Actor.ProfilePictureUrl,
+                                $"Venmo profile picture of {request.Data.Actor.DisplayName}")));
+                        blocks.Add(new Actions(
+                            new Button("Accept", "acceptButton", null, acceptCommand, null, null),
+                            new Button("Reject", "rejectButton", null, $"venmo complete reject {request.Data.Id}", null, null)));
+                        message += $"{message}\n/{acceptCommand}";
+
+                        if (userChannel != null)
+                        {
+                            await SendSlackMessage(databaseInfo.Value.workspaceInfo,
+                                $"{message}\n/{acceptCommand}", blocks, userChannel.Id, httpClient);
+                        }
+                    }
+                    else
+                    {
+                        if (userChannel != null)
+                        {
+                            await SendSlackMessage(databaseInfo.Value.workspaceInfo,
+                                message, userChannel.Id, httpClient);
+                            if (!string.IsNullOrEmpty(autopayResponse.Value.autopayMessage))
+                            {
+                                await SendSlackMessage(databaseInfo.Value.workspaceInfo,
+                                    autopayResponse.Value.autopayMessage, userChannel.Id, httpClient);
+                            }
+                        }
                     }
                 }
             }
@@ -169,6 +216,25 @@ namespace VenmoForSlack.Controllers
             requestMessage.Content = new StringContent(o.ToString(Formatting.None), Encoding.UTF8, "application/json");
             requestMessage.Headers.Authorization = new AuthenticationHeaderValue("Bearer", botToken);
             await httpClient.SendAsync(requestMessage);
+        }
+
+        private async Task<VenmoApi?> GetVenmoApi(Database.Models.VenmoUser venmoUser,
+            WorkspaceInfo workspaceInfo,
+            MongoDatabase database)
+        {
+            VenmoApi venmoApi = new VenmoApi(venmoApiLogger);
+            string? accessToken = await helperMethods.CheckIfVenmoAccessTokenIsExpired(venmoUser, venmoApi, database);
+            if (string.IsNullOrEmpty(accessToken))
+            {
+                logger.LogError($"Unable to refresh Venmo access token for {venmoUser.UserId}");
+                await SendSlackMessage(workspaceInfo,
+                    "Unable to complete autopayments as your Venmo token has expired. Please refresh it.",
+                    venmoUser.UserId, httpClient);
+                return null;
+            }
+
+            venmoApi.AccessToken = accessToken;
+            return venmoApi;
         }
 
         private (MongoDatabase database, Database.Models.VenmoUser user, WorkspaceInfo workspaceInfo)? GetUserFromDatabases(string venmoId)

@@ -501,7 +501,7 @@ namespace VenmoForSlack
                             {
                                 friendsList = await venmoApi.GetAllFriends();
                             }
-                            id = VenmoApi.FindFriend(recipient, friendsList);
+                            id = VenmoApi.FindFriendId(recipient, friendsList);
                             if (id != null)
                             {
                                 AddUsernameToCache(recipient, id, venmoUser, database);

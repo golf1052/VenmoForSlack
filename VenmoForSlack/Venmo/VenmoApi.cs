@@ -168,7 +168,7 @@ namespace VenmoForSlack.Venmo
                 { "client_secret", Secrets.VenmoClientSecret },
                 { "refresh_token", refreshToken }
             };
-            
+
             HttpResponseMessage responseMessage = await Post(url, new FormUrlEncodedContent(data));
             if (!responseMessage.IsSuccessStatusCode)
             {
@@ -202,7 +202,8 @@ namespace VenmoForSlack.Venmo
                 UserId = me.Data!.User.Id;
             }
             Url url = new Url(BaseUrl).AppendPathSegments("users", UserId, "friends")
-                .SetQueryParams(new {
+                .SetQueryParams(new
+                {
                     limit = limit,
                     offset = offset,
                     access_token = AccessToken
@@ -212,7 +213,7 @@ namespace VenmoForSlack.Venmo
             return response;
         }
 
-        public async Task<List<VenmoUser>> GetAllFriends()
+        public async virtual Task<List<VenmoUser>> GetAllFriends()
         {
             MeResponse me = await GetMe();
             int limit = me.Data!.User.FriendsCount!.Value;
@@ -325,7 +326,8 @@ namespace VenmoForSlack.Venmo
         public async Task<VenmoPaymentPendingResponse> GetPending(int limit = 20, int offset = 0)
         {
             Url url = new Url(BaseUrl).AppendPathSegment("payments")
-                .SetQueryParams(new {
+                .SetQueryParams(new
+                {
                     status = "pending",
                     access_token = AccessToken
                 });
@@ -406,11 +408,18 @@ namespace VenmoForSlack.Venmo
             return response;
         }
 
-        public static string? FindFriend(string recipient, List<VenmoUser> friends)
+        /// <summary>
+        /// Find the Venmo id of the given user from the given list of users.
+        /// Intended to be used to find the Venmo id of a friend from the list of friends retrieved from <see cref="GetAllFriends()"/>
+        /// </summary>
+        /// <param name="recipient">User to find</param>
+        /// <param name="friends">List of users</param>
+        /// <returns>The given user's Venmo id</returns>
+        public static string? FindFriendId(string recipient, List<VenmoUser> friends)
         {
             foreach (var friend in friends)
             {
-                if (friend.Username.ToUpper() == recipient.ToUpper())
+                if (string.Equals(friend.Username, recipient, StringComparison.OrdinalIgnoreCase))
                 {
                     return friend.Id;
                 }

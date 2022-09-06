@@ -35,6 +35,9 @@ namespace VenmoForSlack.Database.Models
         [BsonElement("schedule")]
         public List<VenmoSchedule>? Schedule { get; set; }
 
+        [BsonElement("autopay")]
+        public List<VenmoAutopay>? Autopay { get; set; }
+
         public VenmoAlias? GetAlias(string alias)
         {
             if (Alias != null)

@@ -596,7 +596,7 @@ namespace VenmoForSlack.Controllers
                     var response = await helperMethods.VenmoPayment(venmoApi, venmoUser, database, parsedVenmoPayment.Amount,
                         parsedVenmoPayment.Note, parsedVenmoPayment.Recipients, parsedVenmoPayment.Action,
                         parsedVenmoPayment.Audience);
-                    
+
                     foreach (var r in response.responses)
                     {
                         if (!string.IsNullOrEmpty(r.Error))
@@ -655,6 +655,11 @@ namespace VenmoForSlack.Controllers
                         return;
                     }
                     ParseScheduleMessage(splitMessage, slackUser.TimeZone, venmoUser, database, respondAction);
+                }
+                else if (splitMessage[1].ToLower() == "autopay")
+                {
+                    Autopay autopay = new Autopay(venmoApi, database);
+                    await autopay.Parse(splitMessage, venmoUser, respondAction);
                 }
             }
         }
@@ -1039,14 +1044,14 @@ namespace VenmoForSlack.Controllers
             MongoDatabase database)
         {
             List<Venmo.Models.VenmoUser> friends = await venmoApi.GetAllFriends();
-            string? friendId = VenmoApi.FindFriend(username, friends);
+            string? friendId = VenmoApi.FindFriendId(username, friends);
             if (friendId == null)
             {
                 var searchResponse = await helperMethods.ProcessUnknownRecipients(new List<string>() { username }, venmoApi,
                 venmoUser, database);
                 foreach (var foundUser in searchResponse.foundUsers)
                 {
-                    if (username.ToLower() == foundUser.Username.ToLower())
+                    if (string.Equals(username, foundUser.Username, StringComparison.OrdinalIgnoreCase))
                     {
                         friendId = foundUser.Id;
                         break;
