@@ -73,12 +73,15 @@ namespace VenmoForSlack
                 {
                     amount = parsedAmount.Value.amount;
                     comparison = parsedAmount.Value.comparison;
-                    if (!IsValidAnd(splitMessage[10]))
+                    if (splitMessage.Length >= 11)
                     {
-                        respondAction("Invalid autopay statement. Need \"and\" between sections.", null);
-                        return;
+                        if (!IsValidAnd(splitMessage[10]))
+                        {
+                            respondAction("Invalid autopay statement. Need \"and\" between sections.", null);
+                            return;
+                        }
+                        note = ParseNote(11, splitMessage);
                     }
-                    note = ParseNote(11, splitMessage);
                 }
 
                 string? userId = await GetKnownUserId(username, venmoUser);
