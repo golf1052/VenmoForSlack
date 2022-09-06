@@ -66,13 +66,35 @@ venmo schedule list
     list all scheduled Venmos
 venmo schedule delete ###
     delete the specified scheduled Venmo
+venmo autopay add user is {friend id or alias} {and amount is/=/==/===/</<= ""amount""} {and note is ""note""}
+    example: venmo autopay add user is test_user and amount is $4.20 and note is test note
+    example: venmo autopay add user is anotheruser and amount <= 10
+    example: venmo autopay add user is thirduser and note is another note
+    example: venmo autopay add user is fourthuser
+    In order to add an autopayment for a Venmo user you must be friends with them or have their Venmo username aliased.
+    You can define an amount and/or a note to accept from that Venmo user.
+    Once you setup an autopayment, anytime you get a Venmo from that user that matches your defined autopayment you will automatically pay them.
+    If you have an autopayment for a Venmo user with an amount or note defined but the charge from that Venmo user doesn't match you'll get a response on why it didn't match.
+    There is a built-in cooldown on how often autopayments can be triggered in order to prevent abuse.
+venmo autopay list
+    List all defined autopayments
+venmo autopay delete ###
+    Delete the specified autopayment
 venmo delete
     Deletes your Venmo authentication information from the database but retains your settings (aliases, schedules).
 venmo delete everything
     Deletes all of your information including your Venmo authentication information and settings (aliases, schedules) and your YNAB authentication information and settings (mappings) from the database.
     This is not reversible.
+venmo auth username password
+    *ONLY SEND IN THE VENMO APP DM OR YOU RISK LEAKING YOUR PASSWORD*
+    username = Your Venmo login email/username/phone number
+    password = Your Venmo password
+    Logs you into Venmo. You may receive a 2FA code on your phone. If so send `/venmo otp <CODE>` with the code received.
+venmo otp code
+    code = 2FA code received on your phone
+    Verifies your 2FA code and logs you into Venmo.
 venmo code code
-    code = Venmo authentication code
+    No longer supported. Use `/venmo auth username password` instead
 venmo create
     Updates the Venmo Home tab
 venmo help

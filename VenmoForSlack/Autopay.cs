@@ -497,7 +497,7 @@ namespace VenmoForSlack
         public bool IsValidIs(string text)
         {
             text = text.ToLower();
-            return text == "is" || text == "=" || text == "==";
+            return text == "is" || text == "=" || text == "==" || text == "===";
         }
 
         public bool IsValidLessThan(string text)
