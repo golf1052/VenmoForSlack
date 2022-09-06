@@ -62,19 +62,25 @@ namespace VenmoForSlack.Controllers
             string message = string.Empty;
             if (request.Type == "payment.created")
             {
-                var databaseInfo = GetUserFromDatabases(request.Data.Target.User.Id);
-                if (databaseInfo == null)
+                // Because Venmo webhooks don't have any info that we can use to match the webhook to a specific
+                // user in a specific database get all matching databases so we can try and find the right
+                // database for a user's autopayments later.
+                var matchingDbs = GetMatchingDatabases(request.Data.Target.User.Id);
+                if (matchingDbs == null)
                 {
                     return "";
                 }
 
-                if (WebhookSeenBefore(databaseInfo.Value.user, request.Data.Id, request.Data.Status))
+                int matchingDbIndex = 0;
+                var databaseInfo = matchingDbs[0];
+
+                if (WebhookSeenBefore(databaseInfo.user, request.Data.Id, request.Data.Status))
                 {
                     return "";
                 }
 
-                SaveWebhookId(databaseInfo.Value.user, request.Data.Id, request.Data.Status, databaseInfo.Value.database);
-                SlackCore slackApi = new SlackCore(databaseInfo.Value.workspaceInfo.BotToken);
+                SaveWebhookId(databaseInfo.user, request.Data.Id, request.Data.Status, databaseInfo.database);
+                SlackCore slackApi = new SlackCore(databaseInfo.workspaceInfo.BotToken);
                 message += $"{request.Data.Actor.DisplayName} ({request.Data.Actor.Username}) ";
 
                 if (request.Data.Action == "pay")
@@ -89,24 +95,40 @@ namespace VenmoForSlack.Controllers
 
                 if (request.Data.Action == "pay")
                 {
-                    await SendSlackMessage(databaseInfo.Value.workspaceInfo, message, databaseInfo.Value.user.UserId, httpClient);
+                    await SendSlackMessage(databaseInfo.workspaceInfo, message, databaseInfo.user.UserId, httpClient);
                 }
                 
                 if (request.Data.Action == "charge")
                 {
-                    VenmoApi? venmoApi = await GetVenmoApi(databaseInfo.Value.user,
-                        databaseInfo.Value.workspaceInfo,
-                        databaseInfo.Value.database);
-
+                    // Now look for the DB the user is in that has autopayments defined
                     (bool autopaid, string? autopayMessage)? autopayResponse = null;
-                    if (venmoApi != null)
+                    foreach (var db in matchingDbs)
                     {
-                        Autopay autopay = new Autopay(venmoApi, databaseInfo.Value.database);
-                        autopayResponse = await autopay.CheckForAutopayment(request, databaseInfo.Value.user);
+                        if (db.user.Autopay == null || db.user.Autopay.Count == 0)
+                        {
+                            continue;
+                        }
+
+                        VenmoApi? venmoApi = await GetVenmoApi(db.user,
+                            db.workspaceInfo,
+                            db.database);
+
+                        if (venmoApi != null)
+                        {
+                            Autopay autopay = new Autopay(venmoApi, db.database);
+                            autopayResponse = await autopay.CheckForAutopayment(request, db.user);
+                            if (autopayResponse != null && autopayResponse.Value.autopaid)
+                            {
+                                // If autopayments are defined and an autopayment was successful assume this is the
+                                // correct database
+                                databaseInfo = db;
+                                break;
+                            }
+                        }
                     }
 
                     var channels = await slackApi.ConversationsList(false, "im");
-                    var userChannel = channels.FirstOrDefault(c => c.User == databaseInfo.Value.user.UserId);
+                    var userChannel = channels.FirstOrDefault(c => c.User == databaseInfo.user.UserId);
 
                     List<IBlock>? blocks = null;
                     if (!autopayResponse.HasValue || !autopayResponse.Value.autopaid)
@@ -115,7 +137,7 @@ namespace VenmoForSlack.Controllers
                         {
                             if (userChannel != null)
                             {
-                                await SendSlackMessage(databaseInfo.Value.workspaceInfo,
+                                await SendSlackMessage(databaseInfo.workspaceInfo,
                                     autopayResponse.Value.autopayMessage, userChannel.Id, httpClient);
                             }
                         }
@@ -133,7 +155,7 @@ namespace VenmoForSlack.Controllers
 
                         if (userChannel != null)
                         {
-                            await SendSlackMessage(databaseInfo.Value.workspaceInfo,
+                            await SendSlackMessage(databaseInfo.workspaceInfo,
                                 $"{message}\n/{acceptCommand}", blocks, userChannel.Id, httpClient);
                         }
                     }
@@ -141,11 +163,11 @@ namespace VenmoForSlack.Controllers
                     {
                         if (userChannel != null)
                         {
-                            await SendSlackMessage(databaseInfo.Value.workspaceInfo,
+                            await SendSlackMessage(databaseInfo.workspaceInfo,
                                 message, userChannel.Id, httpClient);
                             if (!string.IsNullOrEmpty(autopayResponse.Value.autopayMessage))
                             {
-                                await SendSlackMessage(databaseInfo.Value.workspaceInfo,
+                                await SendSlackMessage(databaseInfo.workspaceInfo,
                                     autopayResponse.Value.autopayMessage, userChannel.Id, httpClient);
                             }
                         }
@@ -161,17 +183,18 @@ namespace VenmoForSlack.Controllers
 
                 // When user charges someone else and their payment is completed the user is the actor.
                 // When user is charged by someone else and their payment is completed the user is the target.
-                var databaseInfo = GetUserFromDatabases(request.Data.Actor.Id);
-                if (databaseInfo == null)
+                var matchingDbs = GetMatchingDatabases(request.Data.Actor.Id);
+                if (matchingDbs == null)
                 {
                     return "";
                 }
 
-                if (WebhookSeenBefore(databaseInfo.Value.user, request.Data.Id, request.Data.Status))
+                var databaseInfo = matchingDbs[0];
+                if (WebhookSeenBefore(databaseInfo.user, request.Data.Id, request.Data.Status))
                 {
                     return "";
                 }
-                SaveWebhookId(databaseInfo.Value.user, request.Data.Id, request.Data.Status, databaseInfo.Value.database);
+                SaveWebhookId(databaseInfo.user, request.Data.Id, request.Data.Status, databaseInfo.database);
                 message += $"{request.Data.Target.User.DisplayName} ({request.Data.Target.User.Username}) ";
                 
                 if (request.Data.Status == "settled")
@@ -183,7 +206,7 @@ namespace VenmoForSlack.Controllers
                     message += "rejected your ";
                 }
                 message += $"${request.Data.Amount:F2} charge for {request.Data.Note}";
-                await SendSlackMessage(databaseInfo.Value.workspaceInfo, message, databaseInfo.Value.user.UserId, httpClient);
+                await SendSlackMessage(databaseInfo.workspaceInfo, message, databaseInfo.user.UserId, httpClient);
             }
             return "";
         }
@@ -237,8 +260,10 @@ namespace VenmoForSlack.Controllers
             return venmoApi;
         }
 
-        private (MongoDatabase database, Database.Models.VenmoUser user, WorkspaceInfo workspaceInfo)? GetUserFromDatabases(string venmoId)
+        private List<(MongoDatabase database, Database.Models.VenmoUser user, WorkspaceInfo workspaceInfo)>? GetMatchingDatabases(string venmoId)
         {
+            List<(MongoDatabase database, Database.Models.VenmoUser user, WorkspaceInfo workspaceInfo)> matchingDbs =
+                new List<(MongoDatabase database, Database.Models.VenmoUser user, WorkspaceInfo workspaceInfo)>();
             foreach (var workspace in Settings.SettingsObject.Workspaces.Workspaces)
             {
                 WorkspaceInfo workspaceInfo = workspace.Value.ToObject<WorkspaceInfo>()!;
@@ -248,9 +273,14 @@ namespace VenmoForSlack.Controllers
                 {
                     if (user.Venmo?.UserId == venmoId)
                     {
-                        return (database, user, workspaceInfo);
+                        matchingDbs.Add((database, user, workspaceInfo));
                     }
                 }
+            }
+
+            if (matchingDbs.Any())
+            {
+                return matchingDbs;
             }
             return null;
         }
