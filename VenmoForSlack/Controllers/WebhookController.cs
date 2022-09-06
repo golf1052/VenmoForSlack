@@ -22,7 +22,6 @@ namespace VenmoForSlack.Controllers
     [Route("[controller]")]
     public class WebhookController : ControllerBase
     {
-        // TODO: this shouldn't be static...
         private static JsonSerializerSettings blockKitSerializer;
         static WebhookController()
         {
