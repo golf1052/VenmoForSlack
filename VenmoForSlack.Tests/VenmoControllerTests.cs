@@ -1,4 +1,7 @@
+using System;
+using System.Collections.Generic;
 using System.Net.Http;
+using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Logging.Abstractions;
 using NodaTime;
 using NodaTime.Testing;
@@ -29,7 +32,10 @@ namespace VenmoForSlack.Tests
                 NullLogger<YNABHandler>.Instance,
                 fakeClock,
                 helperMethods,
-                NullLogger<MongoDatabase>.Instance);    
+                NullLogger<MongoDatabase>.Instance,
+                new MemoryCache(new MemoryCacheOptions()),
+                TimeSpan.FromSeconds(1),
+                new Dictionary<string, System.Threading.SemaphoreSlim>());    
         }
 
         [Fact]

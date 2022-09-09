@@ -2,16 +2,19 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
+using golf1052.SlackAPI;
 using golf1052.SlackAPI.BlockKit.BlockElements;
 using golf1052.SlackAPI.Objects;
 using golf1052.YNABAPI.Client;
 using golf1052.YNABAPI.Model;
+using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Logging;
 using MongoDB.Bson;
 using NodaTime;
 using NodaTime.Text;
 using VenmoForSlack.Database;
 using VenmoForSlack.Database.Models;
+using VenmoForSlack.Models;
 using VenmoForSlack.Venmo;
 using VenmoForSlack.Venmo.Models.Responses;
 
@@ -24,6 +27,18 @@ namespace VenmoForSlack
         public HelperMethods(ILogger<HelperMethods> logger)
         {
             this.logger = logger;
+        }
+
+        public async Task<List<SlackUser>> GetCachedSlackUsers(string botToken,
+            TimeSpan cacheItemLifetime,
+            SlackCore slackApi,
+            IMemoryCache cache)
+        {
+            return await cache.GetOrCreateAsync(botToken, async entry =>
+            {
+                entry.AbsoluteExpirationRelativeToNow = cacheItemLifetime;
+                return await slackApi.UsersList();
+            });
         }
 
         public Image GetVenmoUserProfileImage(Venmo.Models.VenmoUser user)

@@ -2,8 +2,10 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Net.Http;
+using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Hosting;
+using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -27,19 +29,25 @@ namespace VenmoForSlack
             {
                 var services = serviceScope.ServiceProvider;
                 ScheduleProcessor scheduleProcessor = new ScheduleProcessor(
+                    Duration.FromMinutes(15),
                     services.GetRequiredService<ILogger<ScheduleProcessor>>(),
                     services.GetRequiredService<ILogger<VenmoApi>>(),
                     services.GetRequiredService<ILogger<MongoDatabase>>(),
                     services.GetRequiredService<HttpClient>(),
                     services.GetRequiredService<IClock>(),
-                    services.GetRequiredService<HelperMethods>());
+                    services.GetRequiredService<HelperMethods>(),
+                    services.GetRequiredService<IMemoryCache>(),
+                    TimeSpan.FromDays(1),
+                    services.GetRequiredService<Dictionary<string, SemaphoreSlim>>());
 
                 YNABProcessor ynabProcessor = new YNABProcessor(
+                    Duration.FromHours(1),
                     services.GetRequiredService<ILogger<YNABProcessor>>(),
                     services.GetRequiredService<ILogger<VenmoApi>>(),
                     services.GetRequiredService<ILogger<MongoDatabase>>(),
                     services.GetRequiredService<HttpClient>(),
-                    services.GetRequiredService<HelperMethods>());
+                    services.GetRequiredService<HelperMethods>(),
+                    services.GetRequiredService<Dictionary<string, SemaphoreSlim>>());
             }
             
             CreateHostBuilder(args).Build().Run();

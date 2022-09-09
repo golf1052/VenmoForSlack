@@ -3,6 +3,7 @@ using System.Linq;
 using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Text;
+using System.Threading;
 using System.Threading.Tasks;
 using golf1052.SlackAPI;
 using golf1052.SlackAPI.BlockKit.BlockElements;
@@ -34,18 +35,21 @@ namespace VenmoForSlack.Controllers
         private readonly HelperMethods helperMethods;
         private readonly ILogger<MongoDatabase> mongoDatabaseLogger;
         private readonly ILogger<VenmoApi> venmoApiLogger;
+        private readonly Dictionary<string, SemaphoreSlim> slackApiRateLimits;
 
         public WebhookController(ILogger<WebhookController> logger,
             HttpClient httpClient,
             HelperMethods helperMethods,
             ILogger<MongoDatabase> mongoDatabaseLogger,
-            ILogger<VenmoApi> venmoApiLogger)
+            ILogger<VenmoApi> venmoApiLogger,
+            Dictionary<string, SemaphoreSlim> slackApiRateLimits)
         {
             this.logger = logger;
             this.httpClient = httpClient;
             this.helperMethods = helperMethods;
             this.mongoDatabaseLogger = mongoDatabaseLogger;
             this.venmoApiLogger = venmoApiLogger;
+            this.slackApiRateLimits = slackApiRateLimits;
         }
 
         [HttpGet]
@@ -71,7 +75,6 @@ namespace VenmoForSlack.Controllers
                     return "";
                 }
 
-                int matchingDbIndex = 0;
                 var databaseInfo = matchingDbs[0];
 
                 if (WebhookSeenBefore(databaseInfo.user, request.Data.Id, request.Data.Status))
@@ -80,7 +83,7 @@ namespace VenmoForSlack.Controllers
                 }
 
                 SaveWebhookId(databaseInfo.user, request.Data.Id, request.Data.Status, databaseInfo.database);
-                SlackCore slackApi = new SlackCore(databaseInfo.workspaceInfo.BotToken);
+                SlackCore slackApi = new SlackCore(databaseInfo.workspaceInfo.BotToken, httpClient, slackApiRateLimits);
                 message += $"{request.Data.Actor.DisplayName} ({request.Data.Actor.Username}) ";
 
                 if (request.Data.Action == "pay")

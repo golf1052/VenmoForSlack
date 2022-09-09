@@ -3,7 +3,9 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Net;
 using System.Net.Http;
+using System.Runtime.InteropServices;
 using System.Text;
+using System.Threading;
 using System.Threading.Tasks;
 using golf1052.SlackAPI;
 using golf1052.SlackAPI.BlockKit;
@@ -13,6 +15,7 @@ using golf1052.SlackAPI.BlockKit.CompositionObjects;
 using golf1052.SlackAPI.Events;
 using golf1052.SlackAPI.Objects;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Logging;
 using MongoDB.Bson;
 using Newtonsoft.Json;
@@ -39,6 +42,9 @@ namespace VenmoForSlack.Controllers
         private readonly IClock clock;
         private readonly HelperMethods helperMethods;
         private readonly ILogger<MongoDatabase> mongoDatabaseLogger;
+        private readonly IMemoryCache slackUserCache;
+        private readonly TimeSpan cacheItemLifetime;
+        private readonly Dictionary<string, SemaphoreSlim> slackApiRateLimits;
         private readonly JsonSerializerSettings blockKitSerializer;
         private readonly JsonSerializer jsonSerializer;
         private readonly YNABHandler ynabHandler;
@@ -49,7 +55,10 @@ namespace VenmoForSlack.Controllers
             ILogger<YNABHandler> ynabHandlerLogger,
             IClock clock,
             HelperMethods helperMethods,
-            ILogger<MongoDatabase> mongoDatabaseLogger)
+            ILogger<MongoDatabase> mongoDatabaseLogger,
+            IMemoryCache slackUserCache,
+            TimeSpan cacheItemLifetime,
+            Dictionary<string, SemaphoreSlim> slackApiRateLimits)
         {
             this.logger = logger;
             this.httpClient = httpClient;
@@ -58,6 +67,9 @@ namespace VenmoForSlack.Controllers
             this.clock = clock;
             this.helperMethods = helperMethods;
             this.mongoDatabaseLogger = mongoDatabaseLogger;
+            this.slackUserCache = slackUserCache;
+            this.cacheItemLifetime = cacheItemLifetime;
+            this.slackApiRateLimits = slackApiRateLimits;
             blockKitSerializer = new golf1052.SlackAPI.HelperMethods().GetBlockKitSerializer();
             jsonSerializer = JsonSerializer.CreateDefault(blockKitSerializer);
             ynabHandler = new YNABHandler(ynabHandlerLogger, helperMethods);
@@ -99,7 +111,7 @@ namespace VenmoForSlack.Controllers
                     return "";
                 }
 
-                SlackCore slackApi = new SlackCore(GetWorkspaceInfo(eventWrapper.TeamId).BotToken);
+                SlackCore slackApi = new SlackCore(GetWorkspaceInfo(eventWrapper.TeamId).BotToken, httpClient, slackApiRateLimits);
                 if ((string)eventWrapper.Event["type"]! == AppHomeOpened.Type)
                 {
                     AppHomeOpened appHomeOpened = eventWrapper.Event.ToObject<AppHomeOpened>(jsonSerializer)!;
@@ -123,7 +135,8 @@ namespace VenmoForSlack.Controllers
                 return;
             }
 
-            SlackCore slackApi = new SlackCore(GetWorkspaceInfo(payloadObject.Team.Id!).BotToken);
+            WorkspaceInfo workspaceInfo = GetWorkspaceInfo(payloadObject.Team.Id!);
+            SlackCore slackApi = new SlackCore(workspaceInfo.BotToken, httpClient, slackApiRateLimits);
             MongoDatabase database = GetTeamDatabase(payloadObject.Team.Id!, mongoDatabaseLogger);
 
             if (payloadObject.Actions.Count > 0)
@@ -188,7 +201,7 @@ namespace VenmoForSlack.Controllers
                         else
                         {
                             string venmoString = $"venmo {values["audienceRadio"]} {values["typeRadio"]} {values["amountInput"]} for {values["noteInput"]} to {values["recipientsInput"]}";
-                            _ = GetAccessTokenAndParseMessage(venmoString, payloadObject.User.Id, respondAction, database, slackApi);
+                            _ = GetAccessTokenAndParseMessage(venmoString, payloadObject.User.Id, respondAction, database, slackApi, workspaceInfo);
                         }
                     }
                     else if (button.ActionId == "confirmYesButton")
@@ -197,7 +210,7 @@ namespace VenmoForSlack.Controllers
                         var respondAction = CreateRespondAction(payloadObject.ResponseUrl);
                         foreach (var action in confirmationActions)
                         {
-                            _ = GetAccessTokenAndParseMessage(action, payloadObject.User.Id, respondAction, database, slackApi);
+                            _ = GetAccessTokenAndParseMessage(action, payloadObject.User.Id, respondAction, database, slackApi, workspaceInfo);
                         }
                     }
                     else if (button.ActionId == "confirmNoButton")
@@ -206,7 +219,7 @@ namespace VenmoForSlack.Controllers
                     }
                     else
                     {
-                        _ = GetAccessTokenAndParseMessage(button.Value, payloadObject.User.Id, CreateRespondAction(payloadObject.ResponseUrl), database, slackApi);
+                        _ = GetAccessTokenAndParseMessage(button.Value, payloadObject.User.Id, CreateRespondAction(payloadObject.ResponseUrl), database, slackApi, workspaceInfo);
                     }
                 }
             }
@@ -229,8 +242,8 @@ namespace VenmoForSlack.Controllers
                 return verifyRequestResponse;
             }
 
-            SlackCore slackApi = new SlackCore(GetWorkspaceInfo(body.TeamId!).BotToken);
-
+            WorkspaceInfo workspaceInfo = GetWorkspaceInfo(body.TeamId!);
+            SlackCore slackApi = new SlackCore(workspaceInfo.BotToken, httpClient, slackApiRateLimits);
             MongoDatabase database = GetTeamDatabase(body.TeamId!, mongoDatabaseLogger);
 
             string requestText = ProcessRequestText(body.Text);
@@ -254,7 +267,7 @@ namespace VenmoForSlack.Controllers
                 return string.Empty;
             }
 
-            _ = GetAccessTokenAndParseMessage($"venmo {requestText}", body.UserId!, CreateRespondAction(body.ResponseUrl!), database, slackApi);
+            _ = GetAccessTokenAndParseMessage($"venmo {requestText}", body.UserId!, CreateRespondAction(body.ResponseUrl!), database, slackApi, workspaceInfo);
             return string.Empty;
         }
 
@@ -311,7 +324,12 @@ namespace VenmoForSlack.Controllers
             return new MongoDatabase(teamId, logger);
         }
 
-        private async Task GetAccessTokenAndParseMessage(string text, string userId, Action<string, List<IBlock>?> respondAction, MongoDatabase database, SlackCore slackApi)
+        private async Task GetAccessTokenAndParseMessage(string text,
+            string userId,
+            Action<string, List<IBlock>?> respondAction,
+            MongoDatabase database,
+            SlackCore slackApi,
+            WorkspaceInfo workspaceInfo)
         {
             string? accessToken = await GetAccessToken(userId, database);
             if (string.IsNullOrEmpty(accessToken))
@@ -322,7 +340,7 @@ namespace VenmoForSlack.Controllers
             else
             {
                 venmoApi.AccessToken = accessToken;
-                _ = ParseMessage(text, userId, respondAction, database, slackApi);
+                _ = ParseMessage(text, userId, respondAction, database, slackApi, workspaceInfo);
             }
         }
 
@@ -359,7 +377,8 @@ namespace VenmoForSlack.Controllers
             string userId,
             Action<string, List<IBlock>?> respondAction,
             MongoDatabase database,
-            SlackCore slackApi)
+            SlackCore slackApi,
+            WorkspaceInfo workspaceInfo)
         {
             Database.Models.VenmoUser venmoUser = database.GetUser(userId)!;
             string[] splitMessage = message.Split(' ');
@@ -646,7 +665,8 @@ namespace VenmoForSlack.Controllers
                 }
                 else if (splitMessage[1].ToLower() == "schedule")
                 {
-                    var slackUsers = await slackApi.UsersList();
+                    var slackUsers = await helperMethods.GetCachedSlackUsers(workspaceInfo.BotToken, cacheItemLifetime,
+                        slackApi, slackUserCache);
                     SlackUser? slackUser = helperMethods.GetSlackUser(venmoUser.UserId, slackUsers);
                     if (slackUser == null)
                     {

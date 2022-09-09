@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Net.Http;
+using System.Threading;
 using System.Threading.Tasks;
 using golf1052.YNABAPI.Client;
 using Microsoft.AspNetCore.Builder;
@@ -31,6 +32,7 @@ namespace VenmoForSlack
         {
             services.AddControllers()
                 .AddNewtonsoftJson();
+            services.AddMemoryCache();
 
             services.AddSingleton<HttpClient>();
             services.AddScoped<VenmoApi>(container =>
@@ -44,6 +46,8 @@ namespace VenmoForSlack
                 return new HelperMethods(logger);
             });
             services.AddSingleton<IClock>(SystemClock.Instance);
+            // For Slack API rate limiting
+            services.AddSingleton<Dictionary<string, SemaphoreSlim>>();
         }
 
         // This method gets called by the runtime. Use this method to configure the HTTP request pipeline.

@@ -2,11 +2,13 @@
 using System.Collections.Generic;
 using System.Linq;
 using System.Net.Http;
+using System.Threading;
 using System.Threading.Tasks;
 using golf1052.SlackAPI;
 using golf1052.YNABAPI.Api;
 using golf1052.YNABAPI.Client;
 using golf1052.YNABAPI.Model;
+using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Logging;
 using NodaTime;
 using VenmoForSlack.Controllers;
@@ -25,21 +27,27 @@ namespace VenmoForSlack
         private readonly ILogger<MongoDatabase> mongoDatabaseLogger;
         private readonly HttpClient httpClient;
         private readonly HelperMethods helperMethods;
+        private readonly Dictionary<string, SemaphoreSlim> slackApiRateLimits;
         private readonly Duration CheckDuration;
+        private readonly Dictionary<string, HashSet<string>> notifiedUserOfFailure;
         private Task checkTask;
 
-        public YNABProcessor(ILogger<YNABProcessor> logger,
+        public YNABProcessor(Duration checkDuration,
+            ILogger<YNABProcessor> logger,
             ILogger<VenmoApi> venmoApiLogger,
             ILogger<MongoDatabase> mongoDatabaseLogger,
             HttpClient httpClient,
-            HelperMethods helperMethods)
+            HelperMethods helperMethods,
+            Dictionary<string, SemaphoreSlim> slackApiRateLimits)
         {
             this.logger = logger;
             this.venmoApiLogger = venmoApiLogger;
             this.mongoDatabaseLogger = mongoDatabaseLogger;
             this.httpClient = httpClient;
             this.helperMethods = helperMethods;
-            CheckDuration = Duration.FromHours(1);
+            this.slackApiRateLimits = slackApiRateLimits;
+            CheckDuration = checkDuration;
+            notifiedUserOfFailure = new Dictionary<string, HashSet<string>>();
             checkTask = CheckForVenmoDeposits();
             _ = CheckCheckVenmoTask();
         }
@@ -53,8 +61,7 @@ namespace VenmoForSlack
                     WorkspaceInfo workspaceInfo = workspace.Value.ToObject<WorkspaceInfo>()!;
                     logger.LogDebug($"Processing workspace ${workspace.Key}");
                     MongoDatabase database = new MongoDatabase(workspace.Key, mongoDatabaseLogger);
-                    SlackCore slackApi = new SlackCore(workspaceInfo.BotToken);
-                    var slackUsers = await slackApi.UsersList();
+                    SlackCore slackApi = new SlackCore(workspaceInfo.BotToken, httpClient, slackApiRateLimits);
                     List<Database.Models.VenmoUser> users = database.GetAllUsers();
                     foreach (var user in users)
                     {
@@ -66,8 +73,20 @@ namespace VenmoForSlack
                             if (ynabAccessToken == null)
                             {
                                 logger.LogError($"Unable to refresh YNAB access token for {user.UserId}");
-                                await WebhookController.SendSlackMessage(workspaceInfo, "Unable to import your Venmo deposits into YNAB because your YNAB authentication information is invalid. Please refresh it.",
-                                    user.UserId, httpClient);
+
+                                if (!notifiedUserOfFailure.ContainsKey(workspace.Key) || !notifiedUserOfFailure[workspace.Key].Contains(user.UserId))
+                                {
+                                    await WebhookController.SendSlackMessage(workspaceInfo, "Unable to import your Venmo deposits into YNAB because your YNAB authentication information is invalid. Please refresh it.",
+                                        user.UserId, httpClient);
+                                }
+                                if (!notifiedUserOfFailure.ContainsKey(workspace.Key))
+                                {
+                                    notifiedUserOfFailure.Add(workspace.Key, new HashSet<string>());
+                                }
+                                if (!notifiedUserOfFailure[workspace.Key].Contains(user.UserId))
+                                {
+                                    notifiedUserOfFailure[workspace.Key].Add(user.UserId);
+                                }
                                 continue;
                             }
                             config = helperMethods.CreateConfiguration(ynabAccessToken);
@@ -78,9 +97,20 @@ namespace VenmoForSlack
                             if (string.IsNullOrEmpty(venmoAccessToken))
                             {
                                 logger.LogError($"Unable to refresh Venmo access token for {user.UserId}");
-                                await WebhookController.SendSlackMessage(workspaceInfo,
-                                    "Unable to process scheduled Venmos as your token has expired. Please refresh it.",
-                                    user.UserId, httpClient);
+                                if (!notifiedUserOfFailure.ContainsKey(workspace.Key) || !notifiedUserOfFailure[workspace.Key].Contains(user.UserId))
+                                {
+                                    await WebhookController.SendSlackMessage(workspaceInfo,
+                                        "Unable to import your Venmo deposits into YNAB because your Venmo token has expired or is invalid. Please refresh it.",
+                                        user.UserId, httpClient);
+                                }
+                                if (!notifiedUserOfFailure.ContainsKey(workspace.Key))
+                                {
+                                    notifiedUserOfFailure.Add(workspace.Key, new HashSet<string>());
+                                }
+                                if (!notifiedUserOfFailure[workspace.Key].Contains(user.UserId))
+                                {
+                                    notifiedUserOfFailure[workspace.Key].Add(user.UserId);
+                                }
                                 continue;
                             }
                             venmoApi.AccessToken = venmoAccessToken;

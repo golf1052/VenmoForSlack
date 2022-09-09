@@ -11,6 +11,8 @@ using golf1052.SlackAPI.Objects;
 using Microsoft.Extensions.Logging;
 using VenmoForSlack.Controllers;
 using System.Net.Http;
+using Microsoft.Extensions.Caching.Memory;
+using System.Threading;
 
 namespace VenmoForSlack
 {
@@ -22,15 +24,23 @@ namespace VenmoForSlack
         private readonly HttpClient httpClient;
         private readonly IClock clock;
         private readonly HelperMethods helperMethods;
+        private readonly IMemoryCache slackUsersCache;
+        private readonly TimeSpan cacheItemLifetime;
+        private readonly Dictionary<string, SemaphoreSlim> slackApiRateLimits;
         private readonly Duration CheckDuration;
+        private readonly Dictionary<string, HashSet<string>> notifiedUserOfFailure;
         private Task checkTask;
 
-        public ScheduleProcessor(ILogger<ScheduleProcessor> logger,
+        public ScheduleProcessor(Duration checkDuration,
+            ILogger<ScheduleProcessor> logger,
             ILogger<VenmoApi> venmoApiLogger,
             ILogger<MongoDatabase> mongoDatabaseLogger,
             HttpClient httpClient,
             IClock clock,
-            HelperMethods helperMethods)
+            HelperMethods helperMethods,
+            IMemoryCache slackUsersCache,
+            TimeSpan cacheItemLifetime,
+            Dictionary<string, SemaphoreSlim> slackApiRateLimits)
         {
             this.logger = logger;
             this.venmoApiLogger = venmoApiLogger;
@@ -38,7 +48,11 @@ namespace VenmoForSlack
             this.httpClient = httpClient;
             this.clock = clock;
             this.helperMethods = helperMethods;
-            CheckDuration = Duration.FromMinutes(15);
+            this.slackUsersCache = slackUsersCache;
+            this.cacheItemLifetime = cacheItemLifetime;
+            this.slackApiRateLimits = slackApiRateLimits;
+            CheckDuration = checkDuration;
+            notifiedUserOfFailure = new Dictionary<string, HashSet<string>>();
             checkTask = CheckSchedules();
             _ = CheckCheckSchedulesTask();
         }
@@ -51,8 +65,9 @@ namespace VenmoForSlack
                 {
                     WorkspaceInfo workspaceInfo = workspace.Value.ToObject<WorkspaceInfo>()!;
                     MongoDatabase database = new MongoDatabase(workspace.Key, mongoDatabaseLogger);
-                    SlackCore slackApi = new SlackCore(workspaceInfo.BotToken);
-                    var slackUsers = await slackApi.UsersList();
+                    SlackCore slackApi = new SlackCore(workspaceInfo.BotToken, httpClient, slackApiRateLimits);
+                    var slackUsers = await helperMethods.GetCachedSlackUsers(workspaceInfo.BotToken, cacheItemLifetime,
+                        slackApi, slackUsersCache);
                     List<Database.Models.VenmoUser> users = database.GetAllUsers();
                     foreach (var user in users)
                     {
@@ -63,9 +78,20 @@ namespace VenmoForSlack
                             if (string.IsNullOrEmpty(accessToken))
                             {
                                 logger.LogError($"Unable to refresh Venmo access token for {user.UserId}");
-                                await WebhookController.SendSlackMessage(workspaceInfo,
-                                    "Unable to process scheduled Venmos as your token has expired. Please refresh it.",
-                                    user.UserId, httpClient);
+                                if (!notifiedUserOfFailure.ContainsKey(workspace.Key) || !notifiedUserOfFailure[workspace.Key].Contains(user.UserId))
+                                {
+                                    await WebhookController.SendSlackMessage(workspaceInfo,
+                                        "Unable to process scheduled Venmos as your token has expired. Please refresh it.",
+                                        user.UserId, httpClient);
+                                }
+                                if (!notifiedUserOfFailure.ContainsKey(workspace.Key))
+                                {
+                                    notifiedUserOfFailure.Add(workspace.Key, new HashSet<string>());
+                                }
+                                if (!notifiedUserOfFailure[workspace.Key].Contains(user.UserId))
+                                {
+                                    notifiedUserOfFailure[workspace.Key].Add(user.UserId);
+                                }
                                 continue;
                             }
 
