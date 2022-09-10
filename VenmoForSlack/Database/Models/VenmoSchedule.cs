@@ -13,5 +13,13 @@ namespace VenmoForSlack.Database.Models
 
         [BsonElement("command")]
         public string Command { get; set; }
+
+        [BsonConstructor]
+        public VenmoSchedule(string verb, DateTime nextExecution, string command)
+        {
+            Verb = verb;
+            NextExecution = nextExecution;
+            Command = command;
+        }
     }
 }

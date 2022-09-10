@@ -27,6 +27,7 @@ namespace VenmoForSlack.Tests
             fakeClock = new FakeClock(SystemClock.Instance.GetCurrentInstant());
             helperMethods = new HelperMethods(NullLogger<HelperMethods>.Instance);
             venmoController = new VenmoController(NullLogger<VenmoController>.Instance,
+                new Settings(),
                 httpClient,
                 venmoApi,
                 NullLogger<YNABHandler>.Instance,

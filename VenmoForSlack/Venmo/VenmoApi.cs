@@ -199,7 +199,7 @@ namespace VenmoForSlack.Venmo
             {
                 // If UserId hasn't been loaded yet then retrieve it
                 MeResponse me = await GetMe();
-                UserId = me.Data!.User.Id;
+                UserId = me.Data!.User!.Id;
             }
             Url url = new Url(BaseUrl).AppendPathSegments("users", UserId, "friends")
                 .SetQueryParams(new
@@ -216,7 +216,7 @@ namespace VenmoForSlack.Venmo
         public async virtual Task<List<VenmoUser>> GetAllFriends()
         {
             MeResponse me = await GetMe();
-            int limit = me.Data!.User.FriendsCount!.Value;
+            int limit = me.Data!.User!.FriendsCount!.Value;
             int offset = 0;
             List<VenmoUser> friends = new List<VenmoUser>();
             FriendsResponse? friendsResponse;
@@ -385,7 +385,7 @@ namespace VenmoForSlack.Venmo
             {
                 // If UserId hasn't been loaded yet then retrieve it
                 MeResponse me = await GetMe();
-                UserId = me.Data!.User.Id;
+                UserId = me.Data!.User!.Id;
             }
             int limit = 50;
             Url url = new Url(BaseUrl).AppendPathSegments("stories", "target-or-actor", UserId)

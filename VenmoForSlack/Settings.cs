@@ -1,19 +1,28 @@
-using System.Collections.Generic;
+using System;
 using System.IO;
 using System.Text;
 using Newtonsoft.Json;
-using Newtonsoft.Json.Linq;
 using VenmoForSlack.Models;
 
 namespace VenmoForSlack
 {
-    public static class Settings
+    public class Settings
     {
-        public static SettingsObject SettingsObject { get; private set; }
-        static Settings()
+        public SettingsObject SettingsObject { get; private set; }
+
+        public Settings() : this("settings.json")
         {
-            string str = File.ReadAllText("settings.json", Encoding.UTF8);
-            SettingsObject = JsonConvert.DeserializeObject<SettingsObject>(str);
+        }
+
+        public Settings(string settingsPath)
+        {
+            string str = File.ReadAllText(settingsPath, Encoding.UTF8);
+            var settingsObject = JsonConvert.DeserializeObject<SettingsObject>(str);
+            if (settingsObject == null)
+            {
+                throw new Exception($"{settingsPath} is null");
+            }
+            SettingsObject = settingsObject;
         }
     }
 }

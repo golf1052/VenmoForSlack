@@ -25,5 +25,12 @@ namespace VenmoForSlack.Database.Models
 
         [BsonElement("last_run")]
         public DateTime? LastRun { get; set; }
+
+        [BsonConstructor]
+        public VenmoAutopay(string username, string userId)
+        {
+            Username = username;
+            UserId = userId;
+        }
     }
 }

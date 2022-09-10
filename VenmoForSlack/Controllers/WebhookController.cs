@@ -31,6 +31,7 @@ namespace VenmoForSlack.Controllers
         }
 
         private readonly ILogger logger;
+        private readonly Settings settings;
         private readonly HttpClient httpClient;
         private readonly HelperMethods helperMethods;
         private readonly ILogger<MongoDatabase> mongoDatabaseLogger;
@@ -38,6 +39,7 @@ namespace VenmoForSlack.Controllers
         private readonly Dictionary<string, SemaphoreSlim> slackApiRateLimits;
 
         public WebhookController(ILogger<WebhookController> logger,
+            Settings settings,
             HttpClient httpClient,
             HelperMethods helperMethods,
             ILogger<MongoDatabase> mongoDatabaseLogger,
@@ -45,6 +47,7 @@ namespace VenmoForSlack.Controllers
             Dictionary<string, SemaphoreSlim> slackApiRateLimits)
         {
             this.logger = logger;
+            this.settings = settings;
             this.httpClient = httpClient;
             this.helperMethods = helperMethods;
             this.mongoDatabaseLogger = mongoDatabaseLogger;
@@ -69,7 +72,7 @@ namespace VenmoForSlack.Controllers
                 // Because Venmo webhooks don't have any info that we can use to match the webhook to a specific
                 // user in a specific database get all matching databases so we can try and find the right
                 // database for a user's autopayments later.
-                var matchingDbs = GetMatchingDatabases(request.Data.Target.User.Id);
+                var matchingDbs = GetMatchingDatabases(request.Data!.Target!.User!.Id!);
                 if (matchingDbs == null)
                 {
                     return "";
@@ -77,14 +80,14 @@ namespace VenmoForSlack.Controllers
 
                 var databaseInfo = matchingDbs[0];
 
-                if (WebhookSeenBefore(databaseInfo.user, request.Data.Id, request.Data.Status))
+                if (WebhookSeenBefore(databaseInfo.user, request.Data.Id!, request.Data.Status!))
                 {
                     return "";
                 }
 
-                SaveWebhookId(databaseInfo.user, request.Data.Id, request.Data.Status, databaseInfo.database);
+                SaveWebhookId(databaseInfo.user, request.Data.Id!, request.Data.Status!, databaseInfo.database);
                 SlackCore slackApi = new SlackCore(databaseInfo.workspaceInfo.BotToken, httpClient, slackApiRateLimits);
-                message += $"{request.Data.Actor.DisplayName} ({request.Data.Actor.Username}) ";
+                message += $"{request.Data.Actor!.DisplayName} ({request.Data.Actor.Username}) ";
 
                 if (request.Data.Action == "pay")
                 {
@@ -179,26 +182,26 @@ namespace VenmoForSlack.Controllers
             }
             else if (request.Type == "payment.updated")
             {
-                if (request.Data.Target.Type != "user")
+                if (request.Data!.Target!.Type != "user")
                 {
                     return "";
                 }
 
                 // When user charges someone else and their payment is completed the user is the actor.
                 // When user is charged by someone else and their payment is completed the user is the target.
-                var matchingDbs = GetMatchingDatabases(request.Data.Actor.Id);
+                var matchingDbs = GetMatchingDatabases(request.Data.Actor!.Id!);
                 if (matchingDbs == null)
                 {
                     return "";
                 }
 
                 var databaseInfo = matchingDbs[0];
-                if (WebhookSeenBefore(databaseInfo.user, request.Data.Id, request.Data.Status))
+                if (WebhookSeenBefore(databaseInfo.user, request.Data.Id!, request.Data.Status!))
                 {
                     return "";
                 }
-                SaveWebhookId(databaseInfo.user, request.Data.Id, request.Data.Status, databaseInfo.database);
-                message += $"{request.Data.Target.User.DisplayName} ({request.Data.Target.User.Username}) ";
+                SaveWebhookId(databaseInfo.user, request.Data.Id!, request.Data.Status!, databaseInfo.database);
+                message += $"{request.Data.Target.User!.DisplayName} ({request.Data.Target.User.Username}) ";
                 
                 if (request.Data.Status == "settled")
                 {
@@ -267,7 +270,7 @@ namespace VenmoForSlack.Controllers
         {
             List<(MongoDatabase database, Database.Models.VenmoUser user, WorkspaceInfo workspaceInfo)> matchingDbs =
                 new List<(MongoDatabase database, Database.Models.VenmoUser user, WorkspaceInfo workspaceInfo)>();
-            foreach (var workspace in Settings.SettingsObject.Workspaces.Workspaces)
+            foreach (var workspace in settings.SettingsObject.Workspaces.Workspaces)
             {
                 WorkspaceInfo workspaceInfo = workspace.Value.ToObject<WorkspaceInfo>()!;
                 MongoDatabase database = new MongoDatabase(workspace.Key, mongoDatabaseLogger);

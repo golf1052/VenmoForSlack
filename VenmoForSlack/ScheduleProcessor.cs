@@ -19,6 +19,7 @@ namespace VenmoForSlack
     public class ScheduleProcessor
     {
         private readonly ILogger<ScheduleProcessor> logger;
+        private readonly Settings settings;
         private readonly ILogger<VenmoApi> venmoApiLogger;
         private readonly ILogger<MongoDatabase> mongoDatabaseLogger;
         private readonly HttpClient httpClient;
@@ -31,7 +32,8 @@ namespace VenmoForSlack
         private readonly Dictionary<string, HashSet<string>> notifiedUserOfFailure;
         private Task checkTask;
 
-        public ScheduleProcessor(Duration checkDuration,
+        public ScheduleProcessor(Settings settings,
+            Duration checkDuration,
             ILogger<ScheduleProcessor> logger,
             ILogger<VenmoApi> venmoApiLogger,
             ILogger<MongoDatabase> mongoDatabaseLogger,
@@ -43,6 +45,7 @@ namespace VenmoForSlack
             Dictionary<string, SemaphoreSlim> slackApiRateLimits)
         {
             this.logger = logger;
+            this.settings = settings;
             this.venmoApiLogger = venmoApiLogger;
             this.mongoDatabaseLogger = mongoDatabaseLogger;
             this.httpClient = httpClient;
@@ -61,7 +64,7 @@ namespace VenmoForSlack
         {
             while (true)
             {
-                foreach (var workspace in Settings.SettingsObject.Workspaces.Workspaces)
+                foreach (var workspace in settings.SettingsObject.Workspaces.Workspaces)
                 {
                     WorkspaceInfo workspaceInfo = workspace.Value.ToObject<WorkspaceInfo>()!;
                     MongoDatabase database = new MongoDatabase(workspace.Key, mongoDatabaseLogger);
@@ -141,13 +144,13 @@ namespace VenmoForSlack
                                         if (parsedVenmoPayment.Action == VenmoAction.Charge)
                                         {
                                             await WebhookController.SendSlackMessage(workspaceInfo,
-                                                $"Successfully charged {r.Data!.Payment.Target!.User.Username} ${r.Data.Payment.Amount} for {r.Data.Payment.Note}. Audience is {r.Data.Payment.Audience}",
+                                                $"Successfully charged {r.Data!.Payment!.Target!.User!.Username} ${r.Data.Payment.Amount} for {r.Data.Payment.Note}. Audience is {r.Data.Payment.Audience}",
                                                 user.UserId, httpClient);
                                         }
                                         else
                                         {
                                             await WebhookController.SendSlackMessage(workspaceInfo,
-                                                $"Successfully paid {r.Data!.Payment.Target!.User.Username} ${r.Data.Payment.Amount} for {r.Data.Payment.Note}. Audience is {r.Data.Payment.Audience}",
+                                                $"Successfully paid {r.Data!.Payment!.Target!.User!.Username} ${r.Data.Payment.Amount} for {r.Data.Payment.Note}. Audience is {r.Data.Payment.Audience}",
                                                 user.UserId, httpClient);
                                         }
                                     }

@@ -1,14 +1,8 @@
-using System;
 using System.Collections.Generic;
-using System.Linq;
 using System.Net.Http;
 using System.Threading;
-using System.Threading.Tasks;
-using golf1052.YNABAPI.Client;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
-using Microsoft.AspNetCore.HttpsPolicy;
-using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -34,13 +28,14 @@ namespace VenmoForSlack
                 .AddNewtonsoftJson();
             services.AddMemoryCache();
 
+            services.AddSingleton<Settings>();
             services.AddSingleton<HttpClient>();
-            services.AddScoped<VenmoApi>(container =>
+            services.AddScoped(container =>
             {
                 var logger = container.GetRequiredService<ILogger<VenmoApi>>();
                 return new VenmoApi(logger);
             });
-            services.AddScoped<HelperMethods>(container =>
+            services.AddScoped(container =>
             {
                 var logger = container.GetRequiredService<ILogger<HelperMethods>>();
                 return new HelperMethods(logger);

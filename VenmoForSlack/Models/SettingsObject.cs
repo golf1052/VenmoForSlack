@@ -6,5 +6,11 @@ namespace VenmoForSlack.Models
     {
         [JsonProperty]
         public WorkspacesObject Workspaces { get; set; }
+
+        [JsonConstructor]
+        public SettingsObject(WorkspacesObject workspaces)
+        {
+            Workspaces = workspaces;
+        }
     }
 }

@@ -7,6 +7,6 @@ namespace VenmoForSlack.Models
     public class WorkspacesObject
     {
         [JsonExtensionData]
-        public IDictionary<string, JToken> Workspaces { get; set; }
+        public IDictionary<string, JToken> Workspaces { get; set; } = null!;
     }
 }

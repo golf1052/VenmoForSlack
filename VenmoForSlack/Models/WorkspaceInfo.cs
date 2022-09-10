@@ -15,5 +15,12 @@ namespace VenmoForSlack.Models
         /// </summary>
         [JsonProperty]
         public string BotToken { get; set; }
+
+        [JsonConstructor]
+        public WorkspaceInfo(string token, string botToken)
+        {
+            Token = token;
+            BotToken = botToken;
+        }
     }
 }

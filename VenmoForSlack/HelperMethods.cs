@@ -14,7 +14,6 @@ using NodaTime;
 using NodaTime.Text;
 using VenmoForSlack.Database;
 using VenmoForSlack.Database.Models;
-using VenmoForSlack.Models;
 using VenmoForSlack.Venmo;
 using VenmoForSlack.Venmo.Models.Responses;
 
@@ -548,7 +547,7 @@ namespace VenmoForSlack
                 bool foundUser = false;
                 foreach (var user in response.Data!)
                 {
-                    if (recipient.ToLower() == user.Username.ToLower())
+                    if (recipient.ToLower() == user.Username!.ToLower())
                     {
                         foundUser = true;
                         foundUsers.Add(user);

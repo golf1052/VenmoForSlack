@@ -5,12 +5,12 @@ namespace VenmoForSlack.Venmo.Models
     public class VenmoWebhookRequest
     {
         [JsonProperty("date_created")]
-        public string DateCreated { get; set; }
+        public string? DateCreated { get; set; }
 
         [JsonProperty("type")]
-        public string Type { get; set; }
+        public string? Type { get; set; }
 
         [JsonProperty("data")]
-        public VenmoPaymentPending Data { get; set; }
+        public VenmoPaymentPending? Data { get; set; }
     }
 }

@@ -22,7 +22,9 @@ namespace VenmoForSlack
     public class YNABProcessor
     {
         private const string Default = "default";
+
         private readonly ILogger<YNABProcessor> logger;
+        private readonly Settings settings;
         private readonly ILogger<VenmoApi> venmoApiLogger;
         private readonly ILogger<MongoDatabase> mongoDatabaseLogger;
         private readonly HttpClient httpClient;
@@ -32,7 +34,8 @@ namespace VenmoForSlack
         private readonly Dictionary<string, HashSet<string>> notifiedUserOfFailure;
         private Task checkTask;
 
-        public YNABProcessor(Duration checkDuration,
+        public YNABProcessor(Settings settings,
+            Duration checkDuration,
             ILogger<YNABProcessor> logger,
             ILogger<VenmoApi> venmoApiLogger,
             ILogger<MongoDatabase> mongoDatabaseLogger,
@@ -41,6 +44,7 @@ namespace VenmoForSlack
             Dictionary<string, SemaphoreSlim> slackApiRateLimits)
         {
             this.logger = logger;
+            this.settings = settings;
             this.venmoApiLogger = venmoApiLogger;
             this.mongoDatabaseLogger = mongoDatabaseLogger;
             this.httpClient = httpClient;
@@ -56,7 +60,7 @@ namespace VenmoForSlack
         {
             while (true)
             {
-                foreach (var workspace in Settings.SettingsObject.Workspaces.Workspaces)
+                foreach (var workspace in settings.SettingsObject.Workspaces.Workspaces)
                 {
                     WorkspaceInfo workspaceInfo = workspace.Value.ToObject<WorkspaceInfo>()!;
                     logger.LogDebug($"Processing workspace ${workspace.Key}");
@@ -343,7 +347,7 @@ namespace VenmoForSlack
                             else if (transaction.Type == "payment")
                             {
                                 // if the user received money, either someone paid them or they charged someone
-                                if ((transaction.Payment!.Action == "pay" && transaction.Payment.Target!.User.Id == venmoUser.Venmo!.UserId) ||
+                                if ((transaction.Payment!.Action == "pay" && transaction.Payment.Target!.User!.Id == venmoUser.Venmo!.UserId) ||
                                     (transaction.Payment.Action == "charge" && transaction.Payment.Actor!.Id == venmoUser.Venmo!.UserId))
                                 {
                                     DateTime transactionDate = DateTime.Parse(transaction.DateCreated);

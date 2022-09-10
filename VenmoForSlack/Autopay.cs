@@ -199,7 +199,7 @@ namespace VenmoForSlack
         public async Task<(bool autopaid, string? message)> CheckForAutopayment(VenmoWebhookRequest request,
             Database.Models.VenmoUser venmoUser)
         {
-            if (request.Type != "payment.created" || request.Data.Action != "charge")
+            if (request.Type != "payment.created" || request.Data!.Action != "charge")
             {
                 return (false, "Autopay only supports created charges;");
             }
@@ -217,7 +217,7 @@ namespace VenmoForSlack
                 autopaymentIndex += 1;
 
                 // First check id matches
-                if (request.Data.Actor.Id != autopayment.UserId)
+                if (request.Data.Actor!.Id != autopayment.UserId)
                 {
                     continue;
                 }
@@ -279,7 +279,7 @@ namespace VenmoForSlack
                 // Next check if the note matches, if there is a note
                 if (!string.IsNullOrEmpty(autopayment.Note))
                 {
-                    if (!string.Equals(autopayment.Note.Trim(), request.Data.Note.Trim(), StringComparison.OrdinalIgnoreCase))
+                    if (!string.Equals(autopayment.Note.Trim(), request.Data.Note!.Trim(), StringComparison.OrdinalIgnoreCase))
                     {
                         if (matchString == null)
                         {
@@ -319,7 +319,7 @@ namespace VenmoForSlack
                 string? errorMessage = null;
                 try
                 {
-                    await venmoApi.PutPayment(request.Data.Id, "approve");
+                    await venmoApi.PutPayment(request.Data.Id!, "approve");
                 }
                 catch (VenmoException ex)
                 {
@@ -369,7 +369,7 @@ namespace VenmoForSlack
                 failString += $" and note is {autopayment.Note}";
             }
 
-            return $"{failString} because requested amount was {request.Data.Amount:F2}.";
+            return $"{failString} because requested amount was {request.Data!.Amount:F2}.";
         }
 
         private string GetFailedAutopaymentNoteString(VenmoAutopay autopayment, VenmoWebhookRequest request, int autopaymentIndex)
@@ -382,7 +382,7 @@ namespace VenmoForSlack
                 failString += $" and amount {autopayment.Comparison} {autopayment.Amount}";
             }
 
-            return $"{failString} because request note was {request.Data.Note}.";
+            return $"{failString} because request note was {request.Data!.Note}.";
         }
 
         private (double amount, string comparison)? ParseAmount(int startIndex, string[] splitMessage)
@@ -451,11 +451,7 @@ namespace VenmoForSlack
             double? amount = null,
             string? note = null)
         {
-            VenmoAutopay autopayStatement = new VenmoAutopay()
-            {
-                Username = username,
-                UserId = userId
-            };
+            VenmoAutopay autopayStatement = new VenmoAutopay(username, userId);
 
             if (!string.IsNullOrEmpty(comparison) && amount != null)
             {

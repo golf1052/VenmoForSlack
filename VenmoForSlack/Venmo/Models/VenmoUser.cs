@@ -6,16 +6,16 @@ namespace VenmoForSlack.Venmo.Models
     public class VenmoUser
     {
         [JsonProperty("id")]
-        public string Id { get; set; }
+        public string? Id { get; set; }
 
         [JsonProperty("username")]
-        public string Username { get; set; }
+        public string? Username { get; set; }
 
         [JsonProperty("first_name")]
-        public string FirstName { get; set; }
+        public string? FirstName { get; set; }
 
         [JsonProperty("last_name")]
-        public string LastName { get; set; }
+        public string? LastName { get; set; }
 
         [JsonProperty("friends_count")]
         public int? FriendsCount { get; set; }
@@ -32,7 +32,7 @@ namespace VenmoForSlack.Venmo.Models
         public string? Phone { get; set; }
 
         [JsonProperty("profile_picture_url")]
-        public string ProfilePictureUrl { get; set; }
+        public string? ProfilePictureUrl { get; set; }
 
         [JsonProperty("is_blocked")]
         public bool IsBlocked { get; set; }
@@ -43,13 +43,13 @@ namespace VenmoForSlack.Venmo.Models
         public DateTimeOffset DateJoined { get; set; }
 
         [JsonProperty("about")]
-        public string About { get; set; }
+        public string? About { get; set; }
 
         [JsonProperty("display_name")]
-        public string DisplayName { get; set; }
+        public string? DisplayName { get; set; }
 
         [JsonProperty("identity_type")]
-        public string IdentityType { get; set; }
+        public string? IdentityType { get; set; }
 
         [JsonProperty("friend_status")]
         public string? FriendStatus { get; set; }

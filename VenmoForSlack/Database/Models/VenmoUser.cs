@@ -9,7 +9,7 @@ namespace VenmoForSlack.Database.Models
     public class VenmoUser
     {
         [BsonId]
-        public string UserId { get; set; } = string.Empty;
+        public string UserId { get; set; }
 
         [BsonElement("venmo")]
         public VenmoAuthObject? Venmo { get; set; }
@@ -38,6 +38,12 @@ namespace VenmoForSlack.Database.Models
         [BsonElement("autopay")]
         public List<VenmoAutopay>? Autopay { get; set; }
 
+        [BsonConstructor]
+        public VenmoUser(string userId)
+        {
+            UserId = userId;
+        }
+
         public VenmoAlias? GetAlias(string alias)
         {
             if (Alias != null)
@@ -46,11 +52,8 @@ namespace VenmoForSlack.Database.Models
                 if (gotElement)
                 {
                     BsonDocument doc = element.Value.AsBsonDocument;
-                    return new VenmoAlias()
-                    {
-                        Username = doc.GetElement("username").Value.AsString,
-                        Id = doc.GetElement("id").Value.AsString
-                    };
+                    return new VenmoAlias(doc.GetElement("username").Value.AsString,
+                        doc.GetElement("id").Value.AsString);
                 }
             }
             return null;
@@ -77,10 +80,7 @@ namespace VenmoForSlack.Database.Models
                 if (gotElement)
                 {
                     BsonDocument doc = element.Value.AsBsonDocument;
-                    return new CachedVenmoUser()
-                    {
-                        Id = doc.GetElement("id").Value.AsString
-                    };
+                    return new CachedVenmoUser(doc.GetElement("id").Value.AsString);
                 }
             }
             return null;

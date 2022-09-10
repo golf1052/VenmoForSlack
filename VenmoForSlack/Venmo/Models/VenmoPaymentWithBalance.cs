@@ -5,10 +5,10 @@ namespace VenmoForSlack.Venmo.Models
     public class VenmoPaymentWithBalance
     {
         [JsonProperty("balance")]
-        public string Balance { get; set; }
+        public string? Balance { get; set; }
 
         [JsonProperty("payment")]
-        public VenmoPayment Payment { get; set; }
+        public VenmoPayment? Payment { get; set; }
 
         // [JsonProperty("payment_token")]
     }

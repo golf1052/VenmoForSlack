@@ -54,7 +54,7 @@ namespace VenmoForSlack.Tests
             mockVenmoApi.Setup(api => api.GetAllFriends().Result)
                 .Returns(friends);
             
-            VenmoUser venmoUser = new VenmoUser();
+            VenmoUser venmoUser = new VenmoUser(string.Empty);
             await autopay.Parse(splitMessage, venmoUser, respondAction);
 
             Assert.NotNull(venmoUser.Autopay);
@@ -88,7 +88,7 @@ namespace VenmoForSlack.Tests
             mockVenmoApi.Setup(api => api.GetAllFriends().Result)
                 .Returns(friends);
 
-            VenmoUser venmoUser = new VenmoUser();
+            VenmoUser venmoUser = new VenmoUser(string.Empty);
             await autopay.Parse(splitMessage, venmoUser, respondAction);
 
             Assert.NotNull(venmoUser.Autopay);
@@ -102,13 +102,12 @@ namespace VenmoForSlack.Tests
         public async Task Parse_List_With_Amount_And_Note()
         {
             string message = "/venmo autopay list";
-            VenmoUser venmoUser = new VenmoUser()
+            VenmoUser venmoUser = new VenmoUser(string.Empty)
             {
                 Autopay = new List<VenmoAutopay>()
                 {
-                    new VenmoAutopay()
+                    new VenmoAutopay("test_user", "1")
                     {
-                        Username = "test_user",
                         Comparison = "=",
                         Amount = 4.2,
                         Note = "test note"
@@ -129,19 +128,17 @@ namespace VenmoForSlack.Tests
         public async Task Parse_List_With_Only_Amount_And_Only_Note()
         {
             string message = "/venmo autopay list";
-            VenmoUser venmoUser = new VenmoUser()
+            VenmoUser venmoUser = new VenmoUser(string.Empty)
             {
                 Autopay = new List<VenmoAutopay>()
                 {
-                    new VenmoAutopay()
+                    new VenmoAutopay("test_user_1", "1")
                     {
-                        Username = "test_user_1",
                         Comparison = "<",
                         Amount = 4.2
                     },
-                    new VenmoAutopay()
+                    new VenmoAutopay("test_user_2", "2")
                     {
-                        Username = "test_user_2",
                         Note = "test note"
                     }
                 }
@@ -174,7 +171,7 @@ namespace VenmoForSlack.Tests
         public async Task Parse_List_No_Autopayments()
         {
             string message = "/venmo autopay list";
-            VenmoUser venmoUser = new VenmoUser();
+            VenmoUser venmoUser = new VenmoUser(string.Empty);
 
             string[] splitMessage = message.Split(' ');
             Action<string, List<IBlock>?> respondAction = (m, b) =>
@@ -191,13 +188,12 @@ namespace VenmoForSlack.Tests
         public async Task Parse_Delete_With_Amount_And_Note()
         {
             string message = "/venmo autopay delete 1";
-            VenmoUser venmoUser = new VenmoUser()
+            VenmoUser venmoUser = new VenmoUser(string.Empty)
             {
                 Autopay = new List<VenmoAutopay>()
                 {
-                    new VenmoAutopay()
+                    new VenmoAutopay("test_user", "1")
                     {
-                        Username = "test_user",
                         Comparison = "=",
                         Amount = 4.2,
                         Note = "test note"
@@ -218,7 +214,7 @@ namespace VenmoForSlack.Tests
         public async Task Parse_Delete_No_Autopayments()
         {
             string message = "/venmo autopay delete";
-            VenmoUser venmoUser = new VenmoUser();
+            VenmoUser venmoUser = new VenmoUser(string.Empty);
 
             string[] splitMessage = message.Split(' ');
             Action<string, List<IBlock>?> respondAction = (m, b) =>
@@ -235,14 +231,11 @@ namespace VenmoForSlack.Tests
         public async Task Parse_Delete_Incorrect_Length()
         {
             string message = "/venmo autopay delete";
-            VenmoUser venmoUser = new VenmoUser()
+            VenmoUser venmoUser = new VenmoUser(string.Empty)
             {
                 Autopay = new List<VenmoAutopay>()
                 {
-                    new VenmoAutopay()
-                    {
-                        Username = "test_user"
-                    }
+                    new VenmoAutopay("test_user", "1")
                 }
             };
 
@@ -259,14 +252,11 @@ namespace VenmoForSlack.Tests
         public async Task Parse_Delete_Invalid_Number()
         {
             string message = "/venmo autopay delete 0";
-            VenmoUser venmoUser = new VenmoUser()
+            VenmoUser venmoUser = new VenmoUser(string.Empty)
             {
                 Autopay = new List<VenmoAutopay>()
                 {
-                    new VenmoAutopay()
-                    {
-                        Username = "test_user"
-                    }
+                    new VenmoAutopay("test_user", "1")
                 }
             };
             string[] splitMessage = message.Split(' ');
@@ -288,7 +278,7 @@ namespace VenmoForSlack.Tests
                 Assert.Equal("Unknown autopay string. Please specify add, list, or delete.", m);
             };
 
-            await autopay.Parse(splitMessage, new VenmoUser(), respondAction);
+            await autopay.Parse(splitMessage, new VenmoUser(string.Empty), respondAction);
         }
     }
 }

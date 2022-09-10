@@ -300,12 +300,9 @@ namespace VenmoForSlack
                 }
             }
 
-            YNABCategoryMapping mapping = new YNABCategoryMapping()
-            {
-                VenmoNote = note,
-                CategoryName = foundCategory.Value.Item1,
-                CategoryId = foundCategory.Value.Item2
-            };
+            YNABCategoryMapping mapping = new YNABCategoryMapping(note,
+                foundCategory.Value.Item1,
+                foundCategory.Value.Item2);
 
             venmoUser.YNAB.Mapping.Add(mapping);
             database.SaveUser(venmoUser);
