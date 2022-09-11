@@ -75,6 +75,7 @@ namespace VenmoForSlack.Tests
             string[] splitMessage = message.Split(' ');
             Action<string, List<IBlock>?> respondAction = (m, b) =>
             {
+                Assert.Equal("Saved autopayment where user is test_user", m);
             };
 
             List<Venmo.Models.VenmoUser> friends = new List<Venmo.Models.VenmoUser>()
@@ -96,6 +97,50 @@ namespace VenmoForSlack.Tests
             VenmoAutopay saved = venmoUser.Autopay[0];
             Assert.Equal("test_user", saved.Username);
             Assert.Equal(friends[0].Id, saved.UserId);
+            Assert.Null(saved.Comparison);
+            Assert.Null(saved.Amount);
+            Assert.Null(saved.Note);
+        }
+
+        [Fact]
+        public async Task Parse_Add_TooShort()
+        {
+            string message = "/venmo autopay add";
+            string[] splitMessage = message.Split(' ');
+            Action<string, List<IBlock>?> respondAction = (m, b) =>
+            {
+                Assert.Equal("Invalid autopay add statement.", m);
+            };
+
+            VenmoUser venmoUser = new VenmoUser(string.Empty);
+            await autopay.Parse(splitMessage, venmoUser, respondAction);
+        }
+
+        [Fact]
+        public async Task Parse_Add_NoUser()
+        {
+            string message = "/venmo autopay add note";
+            string[] splitMessage = message.Split(' ');
+            Action<string, List<IBlock>?> respondAction = (m, b) =>
+            {
+                Assert.Equal("User should be specified first.", m);
+            };
+
+            VenmoUser venmoUser = new VenmoUser(string.Empty);
+            await autopay.Parse(splitMessage, venmoUser, respondAction);
+        }
+
+        [Fact]
+        public async Task Parse_Add_InvalidIsAfterUser()
+        {
+            string message = "/venmo autopay add user -";
+            string[] splitMessage = message.Split(' ');
+            Action<string, List<IBlock>?> respondAction = (m, b) =>
+            {
+                Assert.Equal("Invalid autopay statement.", m);
+            };
+
+            await autopay.Parse(splitMessage, new VenmoUser(string.Empty), respondAction);
         }
 
         [Fact]

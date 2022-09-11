@@ -27,9 +27,15 @@ namespace VenmoForSlack
         {
             if (splitMessage[2].ToLower() == "add")
             {
+                if (splitMessage.Length < 4)
+                {
+                    respondAction("Invalid autopay add statement.", null);
+                    return;
+                }
+
                 if (splitMessage[3].ToLower() != "user")
                 {
-                    respondAction("User should be specified first", null);
+                    respondAction("User should be specified first.", null);
                     return;
                 }
 
@@ -51,7 +57,7 @@ namespace VenmoForSlack
                         return;
                     }
                     SaveAutopayStatement(venmoUser, database, username, knownUserId);
-                    respondAction($"Saved autopay statement where user is {username}", null);
+                    respondAction($"Saved autopayment where user is {username}", null);
                     return;
                 }
 
