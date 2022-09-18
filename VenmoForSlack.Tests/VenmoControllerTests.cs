@@ -7,6 +7,7 @@ using NodaTime;
 using NodaTime.Testing;
 using VenmoForSlack.Controllers;
 using VenmoForSlack.Database;
+using VenmoForSlack.Providers;
 using VenmoForSlack.Venmo;
 using Xunit;
 
@@ -35,7 +36,7 @@ namespace VenmoForSlack.Tests
                 helperMethods,
                 NullLogger<MongoDatabase>.Instance,
                 new MemoryCache(new MemoryCacheOptions()),
-                TimeSpan.FromSeconds(1),
+                new TestCacheItemLifetimeProvider(TimeSpan.FromSeconds(1)),
                 new Dictionary<string, System.Threading.SemaphoreSlim>());    
         }
 
@@ -157,6 +158,16 @@ namespace VenmoForSlack.Tests
         private Instant GetLocalInstant(LocalDateTime localDateTime, string timeZone)
         {
             return CreateZonedDateTime(localDateTime, timeZone).ToInstant();
+        }
+    }
+
+    internal class TestCacheItemLifetimeProvider : ICacheItemLifetimeProvider
+    {
+        public TimeSpan CacheItemLifetime { get; }
+
+        public TestCacheItemLifetimeProvider(TimeSpan timeSpan)
+        {
+            CacheItemLifetime = timeSpan;
         }
     }
 }

@@ -24,6 +24,7 @@ using VenmoForSlack.Controllers.Models;
 using VenmoForSlack.Database;
 using VenmoForSlack.Database.Models;
 using VenmoForSlack.Models;
+using VenmoForSlack.Providers;
 using VenmoForSlack.Venmo;
 using VenmoForSlack.Venmo.Models;
 using VenmoForSlack.Venmo.Models.Responses;
@@ -57,7 +58,7 @@ namespace VenmoForSlack.Controllers
             HelperMethods helperMethods,
             ILogger<MongoDatabase> mongoDatabaseLogger,
             IMemoryCache slackUserCache,
-            TimeSpan cacheItemLifetime,
+            ICacheItemLifetimeProvider cacheItemLifetimeProvider,
             Dictionary<string, SemaphoreSlim> slackApiRateLimits)
         {
             this.logger = logger;
@@ -68,7 +69,7 @@ namespace VenmoForSlack.Controllers
             this.helperMethods = helperMethods;
             this.mongoDatabaseLogger = mongoDatabaseLogger;
             this.slackUserCache = slackUserCache;
-            this.cacheItemLifetime = cacheItemLifetime;
+            cacheItemLifetime = cacheItemLifetimeProvider.CacheItemLifetime;
             this.slackApiRateLimits = slackApiRateLimits;
             blockKitSerializer = new golf1052.SlackAPI.HelperMethods().GetBlockKitSerializer();
             jsonSerializer = JsonSerializer.CreateDefault(blockKitSerializer);

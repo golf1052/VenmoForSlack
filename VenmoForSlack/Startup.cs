@@ -8,6 +8,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using NodaTime;
+using VenmoForSlack.Providers;
 using VenmoForSlack.Venmo;
 
 namespace VenmoForSlack
@@ -43,6 +44,7 @@ namespace VenmoForSlack
             services.AddSingleton<IClock>(SystemClock.Instance);
             // For Slack API rate limiting
             services.AddSingleton<Dictionary<string, SemaphoreSlim>>();
+            services.AddSingleton<ICacheItemLifetimeProvider>(c => new CacheItemLifetimeProvider());
         }
 
         // This method gets called by the runtime. Use this method to configure the HTTP request pipeline.
