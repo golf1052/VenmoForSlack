@@ -4,6 +4,7 @@ using System.Linq;
 using System.Net.Http;
 using System.Text;
 using System.Threading.Tasks;
+using System.Web;
 using Flurl;
 using Microsoft.Extensions.Logging;
 using Newtonsoft.Json;
@@ -323,7 +324,7 @@ namespace VenmoForSlack.Venmo
             return responses;
         }
 
-        public async Task<VenmoPaymentPendingResponse> GetPending(int limit = 20, int offset = 0)
+        public async Task<VenmoPaymentPendingResponse> GetPending(int? limit = null, string? before = null)
         {
             Url url = new Url(BaseUrl).AppendPathSegment("payments")
                 .SetQueryParams(new
@@ -331,6 +332,17 @@ namespace VenmoForSlack.Venmo
                     status = "pending",
                     access_token = AccessToken
                 });
+
+            if (limit != null)
+            {
+                url.SetQueryParam("limit", limit.Value);
+            }
+
+            if (!string.IsNullOrWhiteSpace(before))
+            {
+                url.SetQueryParam("before", before);
+            }
+
             HttpResponseMessage responseMessage = await Get(url);
             VenmoPaymentPendingResponse response = GetObject<VenmoPaymentPendingResponse>(await responseMessage.Content.ReadAsStringAsync());
             return response;
@@ -339,22 +351,26 @@ namespace VenmoForSlack.Venmo
         public async Task<List<VenmoPaymentPending>> GetAllPayments()
         {
             int limit = 100;
-            int offset = 0;
+            string? before = null;
             List<VenmoPaymentPending> pendingPayments = new List<VenmoPaymentPending>();
             VenmoPaymentPendingResponse? response = null;
             do
             {
                 try
                 {
-                    response = await GetPending(limit, offset);
+                    response = await GetPending(limit, before);
                 }
                 catch (VenmoException)
                 {
                     throw;
                 }
                 pendingPayments.AddRange(response.Data!);
+                if (response.Pagination != null && response.Pagination.Next != null)
+                {
+                    var query = HttpUtility.ParseQueryString(new Uri(response.Pagination.Next).Query);
+                    before = query.Get("before");
+                }
                 limit = response.Data!.Count;
-                offset += response.Data.Count;
             }
             while (response.Pagination != null && response.Pagination.Next != null);
             return pendingPayments;
