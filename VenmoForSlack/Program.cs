@@ -46,6 +46,18 @@ namespace VenmoForSlack
                     services.GetRequiredService<HttpClient>(),
                     services.GetRequiredService<HelperMethods>(),
                     services.GetRequiredService<Dictionary<string, SemaphoreSlim>>());
+
+                AutopayProcessor autopayProcessor = new AutopayProcessor(
+                    services.GetRequiredService<ILogger<AutopayProcessor>>(),
+                    services.GetRequiredService<ILogger<MongoDatabase>>(),
+                    services.GetRequiredService<ILogger<VenmoApi>>(),
+                    services.GetRequiredService<Dictionary<string, SemaphoreSlim>>(),
+                    Duration.FromHours(1),
+                    services.GetRequiredService<HttpClient>(),
+                    services.GetRequiredService<Settings>(),
+                    services.GetRequiredService<HelperMethods>(),
+                    services.GetRequiredService<IMemoryCache>(),
+                    TimeSpan.FromDays(1));
             }
             
             CreateHostBuilder(args).Build().Run();

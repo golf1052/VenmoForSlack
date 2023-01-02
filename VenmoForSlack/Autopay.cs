@@ -210,6 +210,17 @@ namespace VenmoForSlack
                 return (false, "Autopay only supports created charges;");
             }
 
+            return await CheckForAutopayment(request.Data, venmoUser);
+        }
+
+        public async Task<(bool autopaid, string? message)> CheckForAutopayment(VenmoPaymentPending paymentPending,
+            Database.Models.VenmoUser venmoUser)
+        {
+            if (paymentPending.Action != "charge")
+            {
+                return (false, "Autopay only supports created charges;");
+            }
+
             if (venmoUser.Autopay == null || venmoUser.Autopay.Count == 0)
             {
                 return (false, string.Empty);
@@ -223,7 +234,7 @@ namespace VenmoForSlack
                 autopaymentIndex += 1;
 
                 // First check id matches
-                if (request.Data.Actor!.Id != autopayment.UserId)
+                if (paymentPending.Actor!.Id != autopayment.UserId)
                 {
                     continue;
                 }
@@ -233,45 +244,45 @@ namespace VenmoForSlack
                 {
                     if (autopayment.Comparison == "=")
                     {
-                        if (autopayment.Amount != request.Data.Amount)
+                        if (autopayment.Amount != paymentPending.Amount)
                         {
                             if (matchString == null)
                             {
-                                matchString = GetFailedAutopaymentAmountString(autopayment, request, autopaymentIndex);
+                                matchString = GetFailedAutopaymentAmountString(autopayment, paymentPending, autopaymentIndex);
                             }
                             else
                             {
-                                matchString += $"\n{GetFailedAutopaymentAmountString(autopayment, request, autopaymentIndex)}";
+                                matchString += $"\n{GetFailedAutopaymentAmountString(autopayment, paymentPending, autopaymentIndex)}";
                             }
                             continue;
                         }
                     }
                     else if (autopayment.Comparison == "<")
                     {
-                        if (request.Data.Amount >= autopayment.Amount)
+                        if (paymentPending.Amount >= autopayment.Amount)
                         {
                             if (matchString == null)
                             {
-                                matchString = GetFailedAutopaymentAmountString(autopayment, request, autopaymentIndex);
+                                matchString = GetFailedAutopaymentAmountString(autopayment, paymentPending, autopaymentIndex);
                             }
                             else
                             {
-                                matchString += $"\n{GetFailedAutopaymentAmountString(autopayment, request, autopaymentIndex)}";
+                                matchString += $"\n{GetFailedAutopaymentAmountString(autopayment, paymentPending, autopaymentIndex)}";
                             }
                             continue;
                         }
                     }
                     else if (autopayment.Comparison == "<=")
                     {
-                        if (request.Data.Amount > autopayment.Amount)
+                        if (paymentPending.Amount > autopayment.Amount)
                         {
                             if (matchString == null)
                             {
-                                matchString = GetFailedAutopaymentAmountString(autopayment, request, autopaymentIndex);
+                                matchString = GetFailedAutopaymentAmountString(autopayment, paymentPending, autopaymentIndex);
                             }
                             else
                             {
-                                matchString += $"\n{GetFailedAutopaymentAmountString(autopayment, request, autopaymentIndex)}";
+                                matchString += $"\n{GetFailedAutopaymentAmountString(autopayment, paymentPending, autopaymentIndex)}";
                             }
                             continue;
                         }
@@ -285,15 +296,15 @@ namespace VenmoForSlack
                 // Next check if the note matches, if there is a note
                 if (!string.IsNullOrEmpty(autopayment.Note))
                 {
-                    if (!string.Equals(autopayment.Note.Trim(), request.Data.Note!.Trim(), StringComparison.OrdinalIgnoreCase))
+                    if (!string.Equals(autopayment.Note.Trim(), paymentPending.Note!.Trim(), StringComparison.OrdinalIgnoreCase))
                     {
                         if (matchString == null)
                         {
-                            matchString = GetFailedAutopaymentNoteString(autopayment, request, autopaymentIndex);
+                            matchString = GetFailedAutopaymentNoteString(autopayment, paymentPending, autopaymentIndex);
                         }
                         else
                         {
-                            matchString += $"\n{GetFailedAutopaymentNoteString(autopayment, request, autopaymentIndex)}";
+                            matchString += $"\n{GetFailedAutopaymentNoteString(autopayment, paymentPending, autopaymentIndex)}";
                         }
                         continue;
                     }
@@ -325,7 +336,7 @@ namespace VenmoForSlack
                 string? errorMessage = null;
                 try
                 {
-                    await venmoApi.PutPayment(request.Data.Id!, "approve");
+                    await venmoApi.PutPayment(paymentPending.Id!, "approve");
                 }
                 catch (VenmoException ex)
                 {
@@ -365,7 +376,7 @@ namespace VenmoForSlack
             return (false, matchString);
         }
 
-        private string GetFailedAutopaymentAmountString(VenmoAutopay autopayment, VenmoWebhookRequest request, int autopaymentIndex)
+        private string GetFailedAutopaymentAmountString(VenmoAutopay autopayment, VenmoPaymentPending paymentPending, int autopaymentIndex)
         {
             string failString = $"Didn't match autopayment {autopaymentIndex + 1} for {autopayment.Username} where" +
                 $" amount {autopayment.Comparison} ${autopayment.Amount}";
@@ -375,10 +386,10 @@ namespace VenmoForSlack
                 failString += $" and note is {autopayment.Note}";
             }
 
-            return $"{failString} because requested amount was {request.Data!.Amount:F2}.";
+            return $"{failString} because requested amount was {paymentPending.Amount:F2}.";
         }
 
-        private string GetFailedAutopaymentNoteString(VenmoAutopay autopayment, VenmoWebhookRequest request, int autopaymentIndex)
+        private string GetFailedAutopaymentNoteString(VenmoAutopay autopayment, VenmoPaymentPending paymentPending, int autopaymentIndex)
         {
             string failString = $"Didn't match autopayment {autopaymentIndex + 1} for {autopayment.Username} where" +
                 $" note is {autopayment.Note}";
@@ -388,7 +399,7 @@ namespace VenmoForSlack
                 failString += $" and amount {autopayment.Comparison} {autopayment.Amount}";
             }
 
-            return $"{failString} because request note was {request.Data!.Note}.";
+            return $"{failString} because request note was {paymentPending.Note}.";
         }
 
         private (double amount, string comparison)? ParseAmount(int startIndex, string[] splitMessage)
