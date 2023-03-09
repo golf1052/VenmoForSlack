@@ -130,7 +130,7 @@ namespace VenmoForSlack
                             // (fromDate - toDate]. We can adjust which transactions get included after if the
                             // subtransactions total doesn't match the deposit total
                             DateOnly toDate = DateOnly.FromDateTime(venmoDeposits[0].Date!.Value);
-                            DateOnly fromDate;
+                            DateOnly fromDate = DateOnly.FromDateTime(venmoDeposits[0].Date!.Value);
                             // if multiple deposits were made on the same day (due to Venmo transfer limits) then
                             // make sure we get the first deposit not on the same day
                             foreach (var deposit in venmoDeposits)
