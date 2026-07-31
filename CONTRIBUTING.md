@@ -2,11 +2,12 @@
 
 ## Testing
 
-- Install [ngrok](https://ngrok.com/) if you don't already have it.
-- `ngrok http 8900`
-- If you are not testing features which involve advanced Slack features just
-  - Go to the Venmo app API settings for the Slack workspace you are testing on api.slack.com
-  - Go to Slack Commands
-  - Edit the Request URL to point to the ngrok HTTPS URL and save
-- Debug
-- When done edit the Request URL back to https://venmo-for-slack.golf1052.com
+- Install [Microsoft Dev Tunnels](https://learn.microsoft.com/en-us/azure/developer/dev-tunnels/) or [ngrok](https://ngrok.com/).
+- `devtunnel host -p 8900 --allow-anonymous` or `ngrok http 8900`
+- To develop locally you'll need to edit three Slack urls
+  - Under "Interactivity & Shortcuts" set "Request URL"
+    - Set back to "https://venmo.golf1052.com/interactive"
+  - Under "Slash Commands" edit "/venmo" "Request URL"
+    - Set back to "https://venmo.golf1052.com"
+  - Under "Event Subscriptions" set "Request URL"
+    - Set back to "https://venmo.golf1052.com/events"

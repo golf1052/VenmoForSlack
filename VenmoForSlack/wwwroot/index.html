@@ -125,12 +125,31 @@
         <p>Deletes all of your information including your Venmo authentication information and settings (aliases, schedules) from the database.</p>
         <p><b>This is not reversible.</b></p>
     </div>
+    <h4>venmo device id</h4>
+    <div class="indent">
+        <p>id: A Venmo device id, starts with <code>fp01-</code></p>
+        <p>Venmo will only log you in from a device it already trusts, so you need to copy a device id out of a browser you've signed in to Venmo with. You only have to do this once.</p>
+        <p><b>Step 1: sign in to Venmo in your browser</b></p>
+        <p>Go to <a href="https://account.venmo.com">account.venmo.com</a> and sign in, finishing any 2FA prompts. A private/incognito window is fine, just don't close it before you've copied the value in step 2.</p>
+        <p><b>Step 2: copy the <code>v_id</code> cookie</b></p>
+        <ol>
+            <li>Press <code>F12</code> to open developer tools.</li>
+            <li>Open the <b>Application</b> tab in Chrome or Edge, or the <b>Storage</b> tab in Firefox. It may be hidden behind a <code>&gt;&gt;</code> arrow. In Safari you first need to turn on <b>Safari</b> &gt; <b>Settings</b> &gt; <b>Advanced</b> &gt; <b>Show features for web developers</b>.</li>
+            <li>In the sidebar on the left expand <b>Cookies</b> and click <code>https://account.venmo.com</code>.</li>
+            <li>Find the row named <code>v_id</code> and copy its <b>Value</b>. Double clicking the value selects all of it.</li>
+        </ol>
+        <p>The value looks like <code>fp01-</code> followed by letters, numbers and dashes. Make sure you copy the whole thing.</p>
+        <p><b>Step 3: send it to the bot</b></p>
+        <p>Send <code>/venmo device</code> followed by the value you copied, then log in with <code>/venmo auth username password</code>.</p>
+        <p>Quicker if you're comfortable with it: on <a href="https://account.venmo.com">account.venmo.com</a> press <code>Ctrl+U</code> (<code>Cmd+Option+U</code> on a Mac) to view the page source, search it for <code>fp01-</code> and copy the single match. Search for <code>fp01-</code> and <b>not</b> <code>deviceId</code>, there's an unrelated <code>deviceId</code> on that page that won't work.</p>
+    </div>
     <h4>venmo auth username password</h4>
     <div class="indent">
         <p><b>ONLY SEND IN THE VENMO APP DM OR YOU RISK LEAKING YOUR PASSWORD</b></p>
         <p>username: Your Venmo login email/username/phone number</p>
         <p>password: Your Venmo password</p>
         <p>Logs you into Venmo. You must authenticate before you can start using other commands.</p>
+        <p>Set your device id with <code>/venmo device id</code> first, otherwise Venmo will refuse the login.</p>
         <p>You may receive a 2FA code on your phone. If so send <code>/venmo otp code</code> with the code received.</p>
     </div>
     <h4>venmo otp code</h4>

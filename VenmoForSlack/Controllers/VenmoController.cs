@@ -355,13 +355,16 @@ namespace VenmoForSlack.Controllers
 
             if (venmoUser.Venmo == null || string.IsNullOrEmpty(venmoUser.Venmo.AccessToken))
             {
+                // Keep the device id around, Venmo doesn't like it when a user keeps authenticating
+                // from brand new devices.
+                string? deviceId = venmoUser.Venmo?.DeviceId;
                 venmoUser.Venmo = new VenmoAuthObject()
                 {
                     AccessToken = "",
                     ExpiresIn = "",
                     RefreshToken = "",
                     UserId = "",
-                    DeviceId = "",
+                    DeviceId = deviceId ?? "",
                     OtpSecret = ""
                 };
                 database.SaveUser(venmoUser);
@@ -690,8 +693,47 @@ namespace VenmoForSlack.Controllers
             string[] splitMessage = message.Split(' ');
             if (splitMessage.Length > 0)
             {
-                if (splitMessage[0].ToLower() == "auth")
+                if (splitMessage[0].ToLower() == "device")
                 {
+                    if (splitMessage.Length < 2)
+                    {
+                        respondAction(VenmoHelp.DeviceIdHelpMessage, null);
+                        return string.Empty;
+                    }
+
+                    // Be forgiving about what gets pasted in, people copy quotes out of cookie viewers
+                    string deviceId = VenmoApi.NormalizeDeviceId(splitMessage[1]);
+                    if (!VenmoApi.IsSupportedDeviceId(deviceId))
+                    {
+                        respondAction($"`{deviceId}` doesn't look like a Venmo device id. They look like " +
+                            "`fp01-` followed by letters, numbers and dashes, so double check you copied " +
+                            "the whole value.\n\n" + VenmoHelp.DeviceIdHelpMessage, null);
+                        return string.Empty;
+                    }
+
+                    Database.Models.VenmoUser? venmoUser = database.GetUser(userId);
+                    if (venmoUser == null)
+                    {
+                        venmoUser = new Database.Models.VenmoUser(userId);
+                    }
+                    if (venmoUser.Venmo == null)
+                    {
+                        venmoUser.Venmo = new VenmoAuthObject();
+                    }
+                    venmoUser.Venmo.DeviceId = deviceId;
+                    database.SaveUser(venmoUser);
+                    respondAction("Device id saved. Now log in with `/venmo auth <username> <password>`", null);
+                    return string.Empty;
+                }
+                else if (splitMessage[0].ToLower() == "auth")
+                {
+                    if (splitMessage.Length < 3)
+                    {
+                        respondAction("Send `/venmo auth <username> <password>` where username is your " +
+                            "Venmo login email/username/phone number.", null);
+                        return string.Empty;
+                    }
+
                     Database.Models.VenmoUser? venmoUser = database.GetUser(userId);
                     if (venmoUser == null)
                     {
@@ -699,7 +741,7 @@ namespace VenmoForSlack.Controllers
                         {
                             Venmo = new VenmoAuthObject()
                             {
-                                DeviceId = Guid.NewGuid().ToString()
+                                DeviceId = VenmoApi.GenerateDeviceId()
                             }
                         };
                         database.SaveUser(venmoUser);
@@ -710,15 +752,17 @@ namespace VenmoForSlack.Controllers
                         {
                             venmoUser.Venmo = new VenmoAuthObject()
                             {
-                                DeviceId = Guid.NewGuid().ToString()
+                                DeviceId = VenmoApi.GenerateDeviceId()
                             };
                             database.SaveUser(venmoUser);
                         }
                         else
                         {
-                            if (string.IsNullOrEmpty(venmoUser.Venmo.DeviceId))
+                            // Venmo rejects logins from device ids that aren't in the format they hand
+                            // out so upgrade device ids saved before we knew about that format.
+                            if (!VenmoApi.IsSupportedDeviceId(venmoUser.Venmo.DeviceId))
                             {
-                                venmoUser.Venmo.DeviceId = Guid.NewGuid().ToString();
+                                venmoUser.Venmo.DeviceId = VenmoApi.GenerateDeviceId();
                                 database.SaveUser(venmoUser);
                             }
                         }
@@ -739,9 +783,14 @@ namespace VenmoForSlack.Controllers
                             database.SaveUser(venmoUser);
                             respondAction("2FA required. Please enter the 2FA code sent to your phone in this format `/venmo otp <CODE>`", null);
                         }
+                        else if (ex.Error?.Code == VenmoApi.UntrustedDeviceErrorCode)
+                        {
+                            respondAction("Venmo wouldn't log you in from this device.\n\n" +
+                                VenmoHelp.DeviceIdHelpMessage, null);
+                        }
                         else
                         {
-                            respondAction("Venmo OTP secret not found.", null);
+                            respondAction(ex.Message, null);
                         }
                         return string.Empty;
                     }
@@ -761,6 +810,11 @@ namespace VenmoForSlack.Controllers
                     if (venmoUser == null)
                     {
                         respondAction("Maybe you forgot to try and authenticate first? `/venmo auth _username_ _password_`", null);
+                        return string.Empty;
+                    }
+                    if (splitMessage.Length < 2)
+                    {
+                        respondAction("Send `/venmo otp <CODE>` with the 2FA code sent to your phone.", null);
                         return string.Empty;
                     }
                     string otp = splitMessage[1];
@@ -1382,14 +1436,12 @@ namespace VenmoForSlack.Controllers
 
         private async Task RequestAuth(string responseUrl)
         {
-            await Respond("Authenticate to Venmo using the following command: `/venmo auth _username_ _password_` where _username_ " +
-                $"is the email, phone number, or username you use to login to Venmo and _password_ is your Venmo password.", responseUrl);
+            await Respond(VenmoHelp.AuthInstructionsMessage, responseUrl);
         }
 
         private void RequestAuth(Action<string, List<IBlock>?> respondAction)
         {
-            respondAction("Authenticate to Venmo using the following command: `/venmo auth _username_ _password_` where _username_ " +
-                $"is the email, phone number, or username you use to login to Venmo and _password_ is your Venmo password.", null);
+            respondAction(VenmoHelp.AuthInstructionsMessage, null);
         }
 
         private async Task PublishHomeTabView(string userId, SlackCore slackApi)

@@ -89,15 +89,56 @@ venmo auth username password
     *ONLY SEND IN THE VENMO APP DM OR YOU RISK LEAKING YOUR PASSWORD*
     username = Your Venmo login email/username/phone number
     password = Your Venmo password
-    Logs you into Venmo. You may receive a 2FA code on your phone. If so send `/venmo otp <CODE>` with the code received.
+    Logs you into Venmo. Set your device id with `/venmo device <id>` first, otherwise Venmo will refuse the login.
+    You may receive a 2FA code on your phone. If so send `/venmo otp <CODE>` with the code received.
 venmo otp code
     code = 2FA code received on your phone
     Verifies your 2FA code and logs you into Venmo.
+venmo device fp01-xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+    Sets the Venmo device id used to log in. Venmo only issues tokens to devices it already trusts,
+    so you need to copy one from a browser you've logged into Venmo with.
+    See `/venmo device` for instructions on where to find it.
 venmo code code
     No longer supported. Use `/venmo auth username password` instead
 venmo create
     Updates the Venmo Home tab
 venmo help
     this help message";
+
+        /// <summary>
+        /// Instructions for copying a trusted device id out of a browser. Venmo will not issue an
+        /// access token to a device id it hasn't seen complete a real login, so this can't be
+        /// generated for the user.
+        /// </summary>
+        public const string DeviceIdHelpMessage =
+@"Venmo will only log you in from a device it already trusts, so you need to copy a device id out of a browser you've signed in to Venmo with. You only have to do this once.
+
+*Step 1: sign in to Venmo in your browser*
+Go to https://account.venmo.com and sign in, finishing any 2FA prompts. A private/incognito window is fine, just don't close it before you've copied the value in step 2.
+
+*Step 2: copy the `v_id` cookie*
+1. Press F12 to open developer tools
+2. Open the `Application` tab in Chrome or Edge, or the `Storage` tab in Firefox. It may be hidden behind a `>>` arrow. In Safari you first need to turn on `Safari` > `Settings` > `Advanced` > `Show features for web developers`
+3. In the sidebar on the left expand `Cookies` and click `https://account.venmo.com`
+4. Find the row named `v_id` and copy its `Value`. Double clicking the value selects all of it
+
+The value looks like `fp01-` followed by letters, numbers and dashes. Make sure you copy the whole thing.
+
+*Step 3: send it to me*
+Send `/venmo device <the value you copied>` and then log in with `/venmo auth <username> <password>`.
+
+Quicker if you're comfortable with it: on https://account.venmo.com press Ctrl+U (Cmd+Option+U on a Mac) to view the page source, search it for `fp01-` and copy the single match. Search for `fp01-` and not `deviceId`, there's an unrelated `deviceId` on that page that won't work.";
+
+        /// <summary>
+        /// Sent when a user needs to log in. Venmo now requires a browser captured device id so this
+        /// walks through both steps.
+        /// </summary>
+        public const string AuthInstructionsMessage =
+@"You need to log in to Venmo. This takes two steps now:
+
+1. Send `/venmo device <id>` with a device id copied from a browser you've signed into Venmo with. Send `/venmo device` on its own for instructions on where to find it.
+2. Send `/venmo auth <username> <password>` where username is the email, phone number, or username you use to log in to Venmo.
+
+*ONLY SEND YOUR PASSWORD IN THE VENMO APP DM OR YOU RISK LEAKING IT*";
     }
 }

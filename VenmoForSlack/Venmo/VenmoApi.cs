@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Net.Http;
 using System.Text;
+using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using System.Web;
 using Flurl;
@@ -19,8 +20,37 @@ namespace VenmoForSlack.Venmo
     public class VenmoApi
     {
         private const string BaseUrl = "https://api.venmo.com/v1/";
+
+        /// <summary>
+        /// Venmo rejects requests that don't look like they're coming from one of their own clients so
+        /// pretend to be the Venmo iOS app.
+        /// </summary>
+        private const string VenmoUserAgent = "Venmo/26.1.0 (iPhone; iOS 18.6.2; Scale/3.0)";
+        private const string VenmoAccept = "application/json; charset=utf-8";
+        private const string VenmoAcceptLanguage = "en-US;q=1.0";
+
+        /// <summary>
+        /// Error code Venmo returns (with a 403) when it won't issue an access token to the device
+        /// the login was attempted from.
+        /// </summary>
+        public const int UntrustedDeviceErrorCode = 240;
+
+        /// <summary>
+        /// Prefix Venmo uses for the device ids it hands out to its own clients.
+        /// </summary>
+        private const string DeviceIdPrefix = "fp01-";
+
+        /// <summary>
+        /// Matches secrets in urls (access_token=abc) and JSON bodies ("access_token": "abc") so they
+        /// can be kept out of logs.
+        /// </summary>
+        private static readonly Regex SecretRegex = new Regex(
+            @"(access_token|refresh_token|client_secret)(=|""\s*:\s*"")([^&""\s]+)",
+            RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
         private readonly ILogger logger;
         private HttpClient httpClient;
+        private readonly string sessionId;
         public string? AccessToken { private get; set; }
         public string? UserId { get; set; }
 
@@ -32,6 +62,49 @@ namespace VenmoForSlack.Venmo
         {
             this.logger = logger;
             this.httpClient = httpClient;
+            sessionId = Random.Shared.NextInt64(0, long.MaxValue).ToString();
+        }
+
+        /// <summary>
+        /// Generates a device id in the format Venmo currently hands out to its own clients.
+        /// Randomly generated bare UUIDs are rejected by Venmo when authenticating.
+        /// </summary>
+        /// <returns>A device id</returns>
+        public static string GenerateDeviceId()
+        {
+            return $"{DeviceIdPrefix}{Guid.NewGuid()}";
+        }
+
+        /// <summary>
+        /// Cleans up a device id pasted by a user. Cookie viewers and JSON blobs tend to bring along
+        /// quotes and whitespace.
+        /// </summary>
+        /// <param name="deviceId">The pasted device id</param>
+        /// <returns>The cleaned up device id</returns>
+        public static string NormalizeDeviceId(string? deviceId)
+        {
+            if (string.IsNullOrWhiteSpace(deviceId))
+            {
+                return string.Empty;
+            }
+            return deviceId.Trim().Trim('"', '\'', ',', ';').Trim();
+        }
+
+        /// <summary>
+        /// Checks if the given device id is in the format Venmo currently expects, which is
+        /// <see cref="DeviceIdPrefix"/> followed by a GUID. Users copy these out of their browser by
+        /// hand so this also catches values that were only partially copied.
+        /// </summary>
+        /// <param name="deviceId">The device id to check</param>
+        /// <returns>True if the device id is in the expected format</returns>
+        public static bool IsSupportedDeviceId(string? deviceId)
+        {
+            if (string.IsNullOrWhiteSpace(deviceId) ||
+                !deviceId.StartsWith(DeviceIdPrefix, StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+            return Guid.TryParseExact(deviceId[DeviceIdPrefix.Length..], "D", out _);
         }
 
         public static string GetAuthorizeUrl()
@@ -71,7 +144,7 @@ namespace VenmoForSlack.Venmo
             Url url = new Url(BaseUrl).AppendPathSegments("oauth", "access_token");
             JObject body = new JObject()
             {
-                { "client_id", 1 },
+                { "client_id", "1" },
                 { "phone_email_or_username", phoneEmailOrUsername },
                 { "password", password }
             };
@@ -85,7 +158,7 @@ namespace VenmoForSlack.Venmo
             Url url = new Url(BaseUrl).AppendPathSegments("oauth", "access_token");
             JObject body = new JObject()
             {
-                { "client_id", 1 }
+                { "client_id", "1" }
             };
             HttpRequestMessage requestMessage = new HttpRequestMessage(HttpMethod.Post, url);
             requestMessage.Content = new StringContent(body.ToString(Formatting.None), Encoding.UTF8, "application/json");
@@ -98,9 +171,10 @@ namespace VenmoForSlack.Venmo
         {
             requestMessage.Headers.Add("device-id", deviceId);
             HttpResponseMessage responseMessage = await Send(requestMessage);
+            string responseString = await responseMessage.Content.ReadAsStringAsync();
             if (responseMessage.IsSuccessStatusCode)
             {
-                VenmoAuthResponse response = JsonConvert.DeserializeObject<VenmoAuthResponse>(await responseMessage.Content.ReadAsStringAsync())!;
+                VenmoAuthResponse response = JsonConvert.DeserializeObject<VenmoAuthResponse>(responseString)!;
                 AccessToken = response.AccessToken;
                 // User id will not be null here, it's returned by the Venmo API
                 UserId = response.User?.Id;
@@ -108,11 +182,11 @@ namespace VenmoForSlack.Venmo
             }
             else if (responseMessage.StatusCode == System.Net.HttpStatusCode.BadRequest)
             {
-                throw CreateVenmoError(await responseMessage.Content.ReadAsStringAsync());
+                throw CreateVenmoError(responseString);
             }
             else if (responseMessage.StatusCode == System.Net.HttpStatusCode.Unauthorized)
             {
-                VenmoException venmoException = CreateVenmoError(await responseMessage.Content.ReadAsStringAsync());
+                VenmoException venmoException = CreateVenmoError(responseString);
                 if (venmoException.Error != null && venmoException.Error.Code.HasValue)
                 {
                     if (venmoException.Error.Code != 81109)
@@ -120,7 +194,12 @@ namespace VenmoForSlack.Venmo
                         logger.LogWarning($"Unexpected 2FA error code. Expected: 81109. Actual: {venmoException.Error.Code.Value}");
                     }
                 }
-                List<string> secretList = responseMessage.Headers.GetValues("venmo-otp-secret").ToList();
+                if (!responseMessage.Headers.TryGetValues("venmo-otp-secret", out IEnumerable<string>? secretValues))
+                {
+                    logger.LogError("venmo-otp-secret doesn't exist in error headers");
+                    throw venmoException;
+                }
+                List<string> secretList = secretValues.ToList();
                 if (secretList.Count == 0)
                 {
                     logger.LogError("venmo-otp-secret doesn't exist in error headers");
@@ -133,7 +212,9 @@ namespace VenmoForSlack.Venmo
             }
             else
             {
-                throw CreateVenmoError(await responseMessage.Content.ReadAsStringAsync());
+                logger.LogError($"Unexpected response while authenticating to Venmo. " +
+                    $"Status code: {(int)responseMessage.StatusCode}. Message: {responseString}");
+                throw CreateVenmoError(responseString);
             }
         }
 
@@ -186,9 +267,16 @@ namespace VenmoForSlack.Venmo
             return response;
         }
 
+        /// <summary>
+        /// Gets the authenticated user's account, including their profile and balance.
+        /// </summary>
+        /// <remarks>
+        /// Venmo retired /v1/me, /v1/account returns the same data.
+        /// </remarks>
+        /// <returns>The authenticated user's account</returns>
         public async Task<MeResponse> GetMe()
         {
-            Url url = new Url(BaseUrl).AppendPathSegment("me");
+            Url url = new Url(BaseUrl).AppendPathSegment("account");
             HttpResponseMessage responseMessage = await Get(url);
             MeResponse response = GetObject<MeResponse>(await responseMessage.Content.ReadAsStringAsync());
             return response;
@@ -314,6 +402,13 @@ namespace VenmoForSlack.Venmo
                 }
                 catch (VenmoException ex)
                 {
+                    // Venmo may now require a payment eligibility token obtained from
+                    // /v1/protection/eligibility before a payment can be created. Log the error code
+                    // so we can tell that apart from an ordinary payment failure.
+                    logger.LogError($"Venmo payment failed. Status code: {(int)responseMessage.StatusCode}. " +
+                        $"Error code: {ex.Error?.Code?.ToString() ?? "none"}. " +
+                        $"Action: {action}. Recipient type: {splitRecipient[0]}. Audience: {venmoAudience}. " +
+                        $"Message: {ex.Message}");
                     response = new VenmoPaymentWithBalanceResponse()
                     {
                         Error = ex.Message
@@ -446,30 +541,89 @@ namespace VenmoForSlack.Venmo
         private async Task<HttpResponseMessage> Get(Url url)
         {
             url.SetQueryParam("access_token", AccessToken);
-            HttpResponseMessage responseMessage = await httpClient.GetAsync(url);
-            logger.LogInformation(await responseMessage.Content.ReadAsStringAsync());
+            HttpRequestMessage requestMessage = new HttpRequestMessage(HttpMethod.Get, url.ToString());
+            HttpResponseMessage responseMessage = await Send(requestMessage, retryOnServerError: false);
+            await LogRequest(requestMessage, responseMessage, null);
             return responseMessage;
         }
 
         private async Task<HttpResponseMessage> Post(Url url, HttpContent httpContent)
         {
-            HttpResponseMessage responseMessage = await Polly.Policy
-                .HandleResult<HttpResponseMessage>(response => response.StatusCode == System.Net.HttpStatusCode.InternalServerError)
-                .WaitAndRetryAsync(Backoff.DecorrelatedJitterBackoffV2(TimeSpan.FromSeconds(5), 30))
-                .ExecuteAsync(async () => await httpClient.PostAsync(url, httpContent));
-            logger.LogInformation(await responseMessage.Content.ReadAsStringAsync());
+            HttpRequestMessage requestMessage = new HttpRequestMessage(HttpMethod.Post, url.ToString())
+            {
+                Content = httpContent
+            };
+            string requestBody = await httpContent.ReadAsStringAsync();
+            HttpResponseMessage responseMessage = await Send(requestMessage);
+            await LogRequest(requestMessage, responseMessage, requestBody);
             return responseMessage;
         }
 
         private async Task<HttpResponseMessage> Put(Url url, HttpContent httpContent)
         {
-            HttpResponseMessage responseMessage = await httpClient.PutAsync(url, httpContent);
-            logger.LogInformation(await responseMessage.Content.ReadAsStringAsync());
+            HttpRequestMessage requestMessage = new HttpRequestMessage(HttpMethod.Put, url.ToString())
+            {
+                Content = httpContent
+            };
+            string requestBody = await httpContent.ReadAsStringAsync();
+            HttpResponseMessage responseMessage = await Send(requestMessage, retryOnServerError: false);
+            await LogRequest(requestMessage, responseMessage, requestBody);
             return responseMessage;
+        }
+
+        /// <summary>
+        /// Logs a request and its response. Access tokens, refresh tokens, and client secrets are
+        /// redacted. Successful requests are logged at information level, failed requests at error
+        /// level so Venmo API changes are easy to spot.
+        /// </summary>
+        /// <param name="request">The request that was sent</param>
+        /// <param name="response">The response that was received</param>
+        /// <param name="requestBody">The body that was sent, if any</param>
+        private async Task LogRequest(HttpRequestMessage request, HttpResponseMessage response, string? requestBody)
+        {
+            string responseBody = await response.Content.ReadAsStringAsync();
+            string requestLine = $"{request.Method} {Redact(request.RequestUri?.ToString())}";
+            string bodyLine = string.IsNullOrEmpty(requestBody) ? string.Empty : $"\nRequest body: {Redact(requestBody)}";
+            string message = $"Venmo API {requestLine} responded {(int)response.StatusCode} " +
+                $"({response.Content.Headers.ContentType?.MediaType}){bodyLine}\nResponse body: {Redact(responseBody)}";
+            if (response.IsSuccessStatusCode)
+            {
+                logger.LogInformation(message);
+            }
+            else
+            {
+                logger.LogError(message);
+            }
+        }
+
+        /// <summary>
+        /// Redacts secrets so they don't end up in logs.
+        /// </summary>
+        /// <param name="value">The value to redact</param>
+        /// <returns>The value with any secrets replaced</returns>
+        private static string Redact(string? value)
+        {
+            if (string.IsNullOrEmpty(value))
+            {
+                return string.Empty;
+            }
+            return SecretRegex.Replace(value, match => $"{match.Groups[1].Value}{match.Groups[2].Value}<redacted>");
         }
 
         private async Task<HttpResponseMessage> Send(HttpRequestMessage request)
         {
+            return await Send(request, retryOnServerError: true);
+        }
+
+        private async Task<HttpResponseMessage> Send(HttpRequestMessage request, bool retryOnServerError)
+        {
+            AddDefaultHeaders(request);
+            if (!retryOnServerError)
+            {
+                // Don't log response as this could contain an access token that doesn't expire
+                return await httpClient.SendAsync(request);
+            }
+
             HttpResponseMessage responseMessage = await Polly.Policy
                 .HandleResult<HttpResponseMessage>(response => response.StatusCode == System.Net.HttpStatusCode.InternalServerError)
                 .WaitAndRetryAsync(Backoff.DecorrelatedJitterBackoffV2(TimeSpan.FromSeconds(5), 30))
@@ -478,9 +632,44 @@ namespace VenmoForSlack.Venmo
             return responseMessage;
         }
 
+        /// <summary>
+        /// Adds the headers the Venmo apps send on every request. Venmo blocks requests that don't
+        /// look like they're coming from one of their own clients.
+        /// </summary>
+        /// <param name="request">The request to add headers to</param>
+        private void AddDefaultHeaders(HttpRequestMessage request)
+        {
+            if (!request.Headers.Contains("User-Agent"))
+            {
+                request.Headers.TryAddWithoutValidation("User-Agent", VenmoUserAgent);
+            }
+            if (!request.Headers.Contains("Accept"))
+            {
+                request.Headers.TryAddWithoutValidation("Accept", VenmoAccept);
+            }
+            if (!request.Headers.Contains("Accept-Language"))
+            {
+                request.Headers.TryAddWithoutValidation("Accept-Language", VenmoAcceptLanguage);
+            }
+            if (!request.Headers.Contains("X-Session-ID"))
+            {
+                request.Headers.TryAddWithoutValidation("X-Session-ID", sessionId);
+            }
+        }
+
         private T GetObject<T>(string responseString)
         {
-            JObject o = JObject.Parse(responseString);
+            JObject o;
+            try
+            {
+                o = JObject.Parse(responseString);
+            }
+            catch (JsonException ex)
+            {
+                logger.LogError(ex, "Unable to parse Venmo response");
+                throw new VenmoException("Unexpected response from Venmo");
+            }
+
             if (o["error"] != null)
             {
                 throw CreateVenmoError(o);
@@ -493,14 +682,38 @@ namespace VenmoForSlack.Venmo
 
         private VenmoException CreateVenmoError(JObject o)
         {
-            return new VenmoException((string)o["error"]!["message"]!);
+            // Deserialize the whole error so the error code is preserved, callers use it to tell
+            // Venmo API changes apart from ordinary failures.
+            VenmoErrorObject? error = o["error"]!.ToObject<VenmoErrorObject>();
+            if (error == null || string.IsNullOrEmpty(error.Message))
+            {
+                return new VenmoException("Unexpected response from Venmo");
+            }
+            return new VenmoException(error);
         }
 
         private VenmoException CreateVenmoError(string responseString)
         {
-            VenmoErrorWrapper<VenmoErrorObject> error =
-                JsonConvert.DeserializeObject<VenmoErrorWrapper<VenmoErrorObject>>(responseString)!;
-            return new VenmoException(error.Error!);
+            VenmoErrorWrapper<VenmoErrorObject>? error = null;
+            try
+            {
+                error = JsonConvert.DeserializeObject<VenmoErrorWrapper<VenmoErrorObject>>(responseString);
+            }
+            catch (JsonException ex)
+            {
+                logger.LogError(ex, "Unable to parse Venmo error response");
+            }
+
+            if (error?.Error == null)
+            {
+                return new VenmoException("Unexpected response from Venmo");
+            }
+
+            if (string.IsNullOrEmpty(error.Error.Message))
+            {
+                error.Error.Message = "Unexpected response from Venmo";
+            }
+            return new VenmoException(error.Error);
         }
     }
 }
